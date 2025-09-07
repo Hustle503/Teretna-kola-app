@@ -32,19 +32,32 @@ db_path = os.path.abspath(MAIN_DB)
 # =========================
 #  Helper funkcije
 # =========================
-def run_sql(db_path: str, sql: str) -> pd.DataFrame:
-    """
-    Izvrši SQL nad 'kola_view':
-      - ATTACH main (obavezno) i opcioni upd (ako UPDATE_DB postoji)
-      - Kreira/Koristi view 'kola_view' koji pokazuje ili na UNION (main.kola UNION ALL upd.kola_update)
-        ili samo na main.kola (ako upd ne postoji).
-    """
+def run_sql(sql: str) -> pd.DataFrame:
+    """Izvrši upit nad UNION bazom (glavna + update)."""
     con = duckdb.connect()
+
+    # ATTACH glavnu i update bazu sa drugim imenima
+    con.execute(f"ATTACH '{MAIN_DB}' AS db_main")
+    if os.path.exists(UPDATE_DB):
+        con.execute(f"ATTACH '{UPDATE_DB}' AS db_upd")
+
+    # kreiramo view da uvek imamo objedinjene podatke
+    if "kola" in get_tables(MAIN_DB):
+        if os.path.exists(UPDATE_DB) and "kola_update" in get_tables(UPDATE_DB):
+            q_union = """
+                CREATE OR REPLACE VIEW kola_union AS
+                SELECT * FROM db_main.kola
+                UNION ALL
+                SELECT * FROM db_upd.kola_update
+            """
+            con.execute(q_union)
+        else:
+            con.execute("CREATE OR REPLACE VIEW kola_union AS SELECT * FROM db_main.kola")
+
     try:
-        con.execute(f"ATTACH '{os.path.abspath(MAIN_DB)}' AS main")
-        has_upd = os.path.exists(UPDATE_DB)
-        if has_upd:
-            con.execute(f"ATTACH '{os.path.abspath(UPDATE_DB)}' AS upd")
+        return con.execute(sql).fetchdf()
+    finally:
+        con.close()
 
         # Proveri da postoje tabele pre kreiranja view-a
         def table_exists(db_alias: str, tbl: str) -> bool:
