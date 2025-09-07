@@ -17,6 +17,38 @@ UPDATE_DB = "kola_sk_update.db"   # opciona lokalna "update" baza
 # =========================
 #  Preuzimanje glavne baze
 # =========================
+# ---------- Preuzimanje glavne baze ----------
+if not os.path.exists(MAIN_DB):
+    with st.spinner("⬇ Preuzimam glavnu bazu sa Google Drive-a..."):
+        r = requests.get(DB_URL, stream=True)
+        r.raise_for_status()
+        with open(MAIN_DB, "wb") as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                f.write(chunk)
+    st.success("✅ Glavna baza uspešno preuzeta sa Google Drive-a!")
+
+# ---------- Provera tipa baze ----------
+st.write("📂 Veličina fajla:", os.path.getsize(MAIN_DB), "bajta")
+
+with open(MAIN_DB, "rb") as f:
+    header = f.read(100)
+
+st.write("🔍 Prvih 100 bajtova:", header)
+
+if b"DuckDB" in header:
+    st.success("✅ Ovo je DuckDB baza.")
+elif b"SQLite format 3" in header:
+    st.warning("⚠️ Ovo je SQLite baza, a ne DuckDB.")
+else:
+    st.error("❌ Fajl nije prepoznat kao DuckDB ili SQLite baza.")
+
+# ---------- Test konekcija ----------
+try:
+    con = duckdb.connect(MAIN_DB)
+    broj_redova = con.execute("SELECT COUNT(*) FROM sqlite_master").fetchone()
+    st.write("📊 Test upit uspeo:", broj_redova)
+except Exception as e:
+    st.error(f"Ne mogu da pročitam bazu: {e}")
 if not os.path.exists(MAIN_DB):
     with st.spinner("⬇ Preuzimam glavnu bazu sa Google Drive-a..."):
         r = requests.get(DB_URL, stream=True)
