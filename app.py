@@ -22,7 +22,7 @@ if not os.path.exists(DB_PATH):
             st.success("✅ Glavna baza uspešno preuzeta!")
         except Exception as e:
             st.error(f"❌ Greška pri preuzimanju baze: {e}")
-
+DB_URL = "https://drive.google.com/uc?export=download&id=1SbaxHotQ0BlNxts5f7tawLIQoWNu-hCG"
 with st.spinner("⬇ Preuzimam bazu sa Drive-a..."):
     r = requests.get(DB_URL)
     # ako HTML, brzo obustavi i javi
