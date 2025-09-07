@@ -22,36 +22,11 @@ if not os.path.exists(DB_PATH):
             st.success("✅ Glavna baza uspešno preuzeta!")
         except Exception as e:
             st.error(f"❌ Greška pri preuzimanju baze: {e}")
-DB_URL = "https://drive.google.com/uc?export=download&id=1SbaxHotQ0BlNxts5f7tawLIQoWNu-hCG"
-with st.spinner("⬇ Preuzimam bazu sa Drive-a..."):
-    r = requests.get(DB_URL)
-    # ako HTML, brzo obustavi i javi
-    if b"<html" in r.content[:100]:
-        st.error("Preuzet fajl je HTML, proveri da li si zamenio link u kodu na direktan 'uc?export=download&id=...' URL.")
-    else:
-        with open(MAIN_DB, "wb") as f:
-            f.write(r.content)
-        st.success("✅ Baza uspešno preuzeta i spremna za upotrebu")
-MAIN_DB = "kola_sk.db"            # glavna baza (preuzimamo ako je nema)
-UPDATE_DB = "kola_sk_update.db"   # opciona lokalna "update" baza
-
-# =========================
-#  Preuzimanje glavne baze
-# =========================
-# ---------- Preuzimanje glavne baze ----------
-if not os.path.exists(MAIN_DB):
-    with st.spinner("⬇ Preuzimam glavnu bazu sa Google Drive-a..."):
-        r = requests.get(DB_URL, stream=True)
-        r.raise_for_status()
-        with open(MAIN_DB, "wb") as f:
-            for chunk in r.iter_content(chunk_size=8192):
-                f.write(chunk)
-    st.success("✅ Glavna baza uspešno preuzeta sa Google Drive-a!")
 
 # ---------- Provera tipa baze ----------
-st.write("📂 Veličina fajla:", os.path.getsize(MAIN_DB), "bajta")
+st.write("📂 Veličina fajla:", os.path.getsize(DB_PATH), "bajta")
 
-with open(MAIN_DB, "rb") as f:
+with open(DB_PATH, "rb") as f:
     header = f.read(100)
 
 st.write("🔍 Prvih 100 bajtova:", header)
@@ -65,22 +40,14 @@ else:
 
 # ---------- Test konekcija ----------
 try:
-    con = duckdb.connect(MAIN_DB)
-    broj_redova = con.execute("SELECT COUNT(*) FROM sqlite_master").fetchone()
-    st.write("📊 Test upit uspeo:", broj_redova)
+    con = duckdb.connect(DB_PATH, read_only=True)
+    broj_tabela = con.execute("SHOW TABLES").fetchall()
+    st.write("📊 Tabele u bazi:", broj_tabela)
 except Exception as e:
     st.error(f"Ne mogu da pročitam bazu: {e}")
-if not os.path.exists(MAIN_DB):
-    with st.spinner("⬇ Preuzimam glavnu bazu sa Google Drive-a..."):
-        r = requests.get(DB_URL, stream=True)
-        r.raise_for_status()
-        with open(MAIN_DB, "wb") as f:
-            for chunk in r.iter_content(chunk_size=8192):
-                f.write(chunk)
-    st.success("✅ Glavna baza uspešno preuzeta sa Google Drive-a!")
 
 # Aktivna putanja do baze
-db_path = os.path.abspath(MAIN_DB)
+db_path = os.path.abspath(DB_PATH)
 
 # =========================
 #  Helper funkcije
