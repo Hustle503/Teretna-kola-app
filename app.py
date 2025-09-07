@@ -11,7 +11,6 @@ import streamlit as st
 #  Konstante / Baze
 # =========================
 DB_URL = "https://drive.google.com/uc?export=download&id=1SbaxHotQ0BlNxts5f7tawLIQoWNu-hCG"
-
 # Provera preuzimanja
 with st.spinner("⬇ Preuzimam bazu sa Drive-a..."):
     r = requests.get(DB_URL)
