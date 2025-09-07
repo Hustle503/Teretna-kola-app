@@ -4,3 +4,4 @@ polars
 duckdb
 openpyxl
 requests
+gdown
