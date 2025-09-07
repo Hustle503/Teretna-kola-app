@@ -1,18 +1,22 @@
 import os
 import time
-import duckdb
-import glob
 import io
+import glob
+import requests
+import duckdb
 import pandas as pd
 import streamlit as st
-import requests
 
-# --- Fiksna glavna baza (Google Drive) ---
+# =========================
+#  Konstante / Baze
+# =========================
 DB_URL = "https://drive.google.com/uc?export=download&id=1SbaxHotQ0BlNxts5f7tawLIQoWNu-hCG"
-MAIN_DB = "kola_sk.db"       # glavna fiksna baza
-UPDATE_DB = "kola_sk_update.db"  # lokalna baza za update
+MAIN_DB = "kola_sk.db"            # glavna baza (preuzimamo ako je nema)
+UPDATE_DB = "kola_sk_update.db"   # opciona lokalna "update" baza
 
-# ---------- Preuzimanje glavne baze ----------
+# =========================
+#  Preuzimanje glavne baze
+# =========================
 if not os.path.exists(MAIN_DB):
     with st.spinner("⬇ Preuzimam glavnu bazu sa Google Drive-a..."):
         r = requests.get(DB_URL, stream=True)
@@ -22,161 +26,151 @@ if not os.path.exists(MAIN_DB):
                 f.write(chunk)
     st.success("✅ Glavna baza uspešno preuzeta sa Google Drive-a!")
 
-# ---------- Helperi ----------
-@st.cache_data(show_spinner=False)
-def get_tables(db_path: str):
-    con = duckdb.connect(db_path)
-    try:
-        return [r[0] for r in con.execute(
-            "SELECT table_name FROM duckdb_tables() WHERE database_name IS NULL"
-        ).fetchall()]
-    finally:
-        con.close()
+# Aktivna putanja do baze
+db_path = os.path.abspath(MAIN_DB)
 
-def run_sql(sql: str) -> pd.DataFrame:
-    """Izvrši upit nad UNION bazom (glavna + update)."""
-    con = duckdb.connect()
-    con.execute(f"ATTACH '{MAIN_DB}' AS main")
-    if os.path.exists(UPDATE_DB):
-        con.execute(f"ATTACH '{UPDATE_DB}' AS upd")
-
-    # kreiramo view da uvek imamo objedinjene podatke
-    q_union = """
-        CREATE OR REPLACE VIEW kola_union AS
-        SELECT * FROM main.kola
-        UNION ALL
-        SELECT * FROM upd.kola_update
+# =========================
+#  Helper funkcije
+# =========================
+def run_sql(db_path: str, sql: str) -> pd.DataFrame:
     """
-    if "kola" in get_tables(MAIN_DB):
-        if os.path.exists(UPDATE_DB) and "kola_update" in get_tables(UPDATE_DB):
-            con.execute(q_union)
-        else:
-            con.execute("CREATE OR REPLACE VIEW kola_union AS SELECT * FROM main.kola")
-
+    Izvrši SQL nad 'kola_view':
+      - ATTACH main (obavezno) i opcioni upd (ako UPDATE_DB postoji)
+      - Kreira/Koristi view 'kola_view' koji pokazuje ili na UNION (main.kola UNION ALL upd.kola_update)
+        ili samo na main.kola (ako upd ne postoji).
+    """
+    con = duckdb.connect()
     try:
+        con.execute(f"ATTACH '{os.path.abspath(MAIN_DB)}' AS main")
+        has_upd = os.path.exists(UPDATE_DB)
+        if has_upd:
+            con.execute(f"ATTACH '{os.path.abspath(UPDATE_DB)}' AS upd")
+
+        # Proveri da postoje tabele pre kreiranja view-a
+        def table_exists(db_alias: str, tbl: str) -> bool:
+            q = f"""
+                SELECT COUNT(*) AS n
+                FROM {db_alias}.information_schema.tables
+                WHERE table_name = '{tbl}'
+            """
+            return con.execute(q).fetchone()[0] > 0
+
+        has_main_kola = table_exists("main", "kola")
+        has_upd_kola = has_upd and table_exists("upd", "kola_update")
+
+        if has_main_kola and has_upd_kola:
+            con.execute("""
+                CREATE OR REPLACE VIEW kola_view AS
+                SELECT * FROM main.kola
+                UNION ALL
+                SELECT * FROM upd.kola_update
+            """)
+        elif has_main_kola:
+            con.execute("""CREATE OR REPLACE VIEW kola_view AS SELECT * FROM main.kola""")
+        else:
+            # Ako ni main.kola ne postoji, napravi prazan view sa očekivanim kolonama
+            con.execute("""
+                CREATE OR REPLACE VIEW kola_view AS
+                SELECT 
+                    CAST(NULL AS VARCHAR) AS "Režim",
+                    CAST(NULL AS VARCHAR) AS "Vlasnik",
+                    CAST(NULL AS VARCHAR) AS "Serija",
+                    CAST(NULL AS INT)     AS "Inv br",
+                    CAST(NULL AS VARCHAR) AS "KB",
+                    CAST(NULL AS VARCHAR) AS "Tip kola",
+                    CAST(NULL AS VARCHAR) AS "Voz br",
+                    CAST(NULL AS VARCHAR) AS "Stanica",
+                    CAST(NULL AS VARCHAR) AS "Status",
+                    CAST(NULL AS VARCHAR) AS "Datum",
+                    CAST(NULL AS VARCHAR) AS "Vreme",
+                    CAST(NULL AS VARCHAR) AS "Roba",
+                    CAST(NULL AS VARCHAR) AS "Reon",
+                    CAST(NULL AS INT)     AS "tara",
+                    CAST(NULL AS INT)     AS "NetoTone",
+                    CAST(NULL AS VARCHAR) AS "Broj vagona",
+                    CAST(NULL AS VARCHAR) AS "Broj kola",
+                    CAST(NULL AS VARCHAR) AS "source_file",
+                    CAST(NULL AS TIMESTAMP) AS "DatumVreme",
+                    CAST(NULL AS VARCHAR) AS "broj_kola_bez_rezima_i_kb"
+                WHERE FALSE
+            """)
+
         return con.execute(sql).fetchdf()
     finally:
         con.close()
-# ---------- Sidebar ----------
+
+def create_or_replace_table_from_df(db_file: str, table_name: str, df: pd.DataFrame):
+    con = duckdb.connect(db_file)
+    try:
+        con.register("df_tmp", df)
+        con.execute(f'CREATE OR REPLACE TABLE "{table_name}" AS SELECT * FROM df_tmp')
+        con.unregister("df_tmp")
+    finally:
+        con.close()
+
+# =========================
+#  SIDEBAR
+# =========================
 st.sidebar.title("⚙️ Podešavanja")
-db_path = st.sidebar.text_input(
-    "Putanja do DuckDB baze (.db)",
-    value=os.path.abspath(DEFAULT_DB)
-)
 
-folder_path = st.sidebar.text_input(
-    "Folder sa TXT fajlovima (npr. C:\\Teretna kola)",
-    value=r"C:\Teretna kola"
-)
-
-table_name = st.sidebar.text_input("Ime tabele", value="kola")
+st.sidebar.caption("Glavna baza: kola_sk.db (auto download). Opciona lokalna baza za UNION: kola_sk_update.db")
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Napomena: `init_database` pokreće **prvo punjenje**. Posle toga koristi `update`.")
-
-init_clicked = st.sidebar.button("🚀 Init database (prvo punjenje)")
-update_clicked = st.sidebar.button("➕ Update (dodaj nove fajlove)")
-
-st.sidebar.markdown("---")
-st.sidebar.subheader("🔄 Ponovno učitavanje fajlova")
-
-# Učitaj sve txt fajlove iz foldera
-txt_files = sorted(glob.glob(os.path.join(folder_path, "*.txt")))
-
-if txt_files:
-    reload_files = st.sidebar.multiselect(
-        "Izaberi fajlove za reload",
-        options=txt_files,
-        format_func=lambda x: os.path.basename(x)
-    )
-    if st.sidebar.button("🔁 Reload označenih fajlova"):
-        for f in reload_files:
-            try:
-                reload_file(f, table_name=table_name)
-                st.success(f"🔄 Fajl {os.path.basename(f)} uspešno ponovo učitan!")
-            except Exception as e:
-                st.error(f"⚠️ Greška pri reload-u {os.path.basename(f)}: {e}")
-else:
-    st.sidebar.warning("⚠️ Nema txt fajlova u izabranom folderu.")
-
-st.sidebar.markdown("---")
-st.sidebar.caption("Baza i fajlovi ostaju na disku; aplikacija samo izvršava SQL i poziva operacije iz database.py.")
-# ---------- Sidebar: Upload Excela ----------
-st.sidebar.subheader("📂 Uvoz Excela (Stanje SK)")
-
-uploaded_excel = st.sidebar.file_uploader(
-    "Izaberi Excel fajl (.xlsx)",
-    type=["xlsx"]
-)
-
-if uploaded_excel is not None:
-    if st.sidebar.button("📥 Učitaj u bazu"):
+st.sidebar.subheader("📂 Uvoz Excela → tabela 'stanje'")
+uploaded_excel_stanje = st.sidebar.file_uploader("Izaberi Excel (.xlsx) za tabelu 'stanje'", type=["xlsx"], key="stanje_up")
+if uploaded_excel_stanje is not None:
+    if st.sidebar.button("📥 Učitaj u bazu kao 'stanje'"):
         try:
-            # 1. Učitaj Excel u pandas
-            df_stanje = pd.read_excel(uploaded_excel)
-
-            # 2. Poveži se na DuckDB
-            con = duckdb.connect(DB_FILE)
-
-            # 3. Snimi kao tabelu 'stanje'
-            con.register("df_stanje", df_stanje)
-            con.execute("CREATE OR REPLACE TABLE stanje AS SELECT * FROM df_stanje")
-            con.unregister("df_stanje")
-
-            # 4. Provera kolona
-            cols = con.execute("PRAGMA table_info(stanje)").fetchdf()
-            con.close()
-
-            st.success(f"✅ Excel učitan u tabelu 'stanje' ({len(df_stanje)} redova).")
-            st.dataframe(cols, use_container_width=True)
-
+            df_stanje = pd.read_excel(uploaded_excel_stanje)
+            create_or_replace_table_from_df(MAIN_DB, "stanje", df_stanje)
+            st.sidebar.success(f"✅ 'stanje' učitano ({len(df_stanje)} redova).")
         except Exception as e:
-            st.error(f"❌ Greška pri uvozu Excela: {e}")
+            st.sidebar.error(f"❌ Greška pri uvozu 'stanje': {e}")
 
-# ---------- Akcije ----------
-if init_clicked:
-    def _init():
-        init_database(folder_path, table_name=table_name)
-        default_abs = os.path.abspath(DEFAULT_DB)
-        if os.path.abspath(db_path) != default_abs and os.path.exists(default_abs):
-            try:
-                if os.path.exists(db_path):
-                    os.remove(db_path)
-                os.replace(default_abs, db_path)
-            except Exception as e:
-                raise RuntimeError(f"Nisam uspeo da premestim {default_abs} → {db_path}: {e}")
-    safe_execute(_init, "✅ Inicijalno punjenje završeno.")
+st.sidebar.subheader("🗺️ Uvoz mape stanica → tabela 'stanice'")
+uploaded_excel_stanice = st.sidebar.file_uploader("Izaberi Excel (.xlsx) za tabelu 'stanice'", type=["xlsx"], key="stanice_up")
+if uploaded_excel_stanice is not None:
+    if st.sidebar.button("📥 Učitaj u bazu kao 'stanice'"):
+        try:
+            df_st = pd.read_excel(uploaded_excel_stanice)
+            create_or_replace_table_from_df(MAIN_DB, "stanice", df_st)
+            st.sidebar.success(f"✅ 'stanice' učitano ({len(df_st)} redova).")
+        except Exception as e:
+            st.sidebar.error(f"❌ Greška pri uvozu 'stanice': {e}")
 
-if update_clicked:
-    def _update():
-        update_database(folder_path, table_name=table_name)
-    safe_execute(_update, "✅ Update završen.")
+st.sidebar.markdown("---")
+st.sidebar.caption("Sve tabele možete koristiti u SQL upitima. Glavni podaci su u pogledu 'kola_view'.")
 
+# =========================
+#  Glavni naslov i Tabovi
+# =========================
 st.title("🚃 Teretna kola SK — kontrolna tabla")
 
 tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
-    "📊 Pregled", "📈 Izveštaji", "🔎 SQL upiti", "🔬 Pregled podataka", "📌 Poslednji unosi", "🔍 Pretraga kola", "📊 Kola po stanicima", "🚂 Kretanje 4098 kola–TIP 0", "🚂 Kretanje 4098 kola–TIP 1", "📊 Kola po serijama"])
+    "📊 Pregled", "📈 Izveštaji", "🔎 SQL upiti", "🔬 Pregled podataka",
+    "📌 Poslednji unosi", "🔍 Pretraga kola",
+    "📊 Kola po stanicama",
+    "🚂 Kretanje 4098 kola – TIP 0",
+    "🚂 Kretanje 4098 kola – TIP 1",
+    "📊 Kola po serijama"
+])
 
-# ---------- Tab 1: Pregled ----------
+# =========================
+#  Tab 1: Pregled
+# =========================
 with tab1:
     col_a, col_b, col_c, col_d = st.columns(4)
     try:
-        df_cnt = run_sql(db_path, f'SELECT COUNT(*) AS broj_redova FROM "{table_name}"')
+        df_cnt = run_sql(db_path, "SELECT COUNT(*) AS broj_redova FROM kola_view")
         col_a.metric("Ukupan broj redova", f"{int(df_cnt['broj_redova'][0]):,}".replace(",", "."))
 
-        df_files = run_sql(db_path, f'SELECT COUNT(DISTINCT source_file) AS fajlova FROM "{table_name}"')
+        df_files = run_sql(db_path, "SELECT COUNT(DISTINCT source_file) AS fajlova FROM kola_view")
         col_b.metric("Učitanih fajlova", int(df_files["fajlova"][0]))
 
-        df_range = run_sql(
-            db_path,
-            f'''
-            SELECT
-              MIN(DatumVreme) AS min_dt,
-              MAX(DatumVreme) AS max_dt
-            FROM "{table_name}"
-            WHERE DatumVreme IS NOT NULL
-            '''
-        )
+        df_range = run_sql(db_path, """
+            SELECT MIN(DatumVreme) AS min_dt, MAX(DatumVreme) AS max_dt
+            FROM kola_view WHERE DatumVreme IS NOT NULL
+        """)
         min_dt = str(df_range["min_dt"][0]) if df_range["min_dt"][0] is not None else "—"
         max_dt = str(df_range["max_dt"][0]) if df_range["max_dt"][0] is not None else "—"
         col_c.metric("Najraniji datum", min_dt)
@@ -184,76 +178,73 @@ with tab1:
 
         st.divider()
         st.subheader("Učitanih redova po fajlu (top 20)")
-        df_by_file = run_sql(
-            db_path,
-            f'''
+        df_by_file = run_sql(db_path, """
             SELECT source_file, COUNT(*) AS broj
-            FROM "{table_name}"
+            FROM kola_view
             GROUP BY source_file
             ORDER BY broj DESC
             LIMIT 20
-            '''
-        )
+        """)
         st.dataframe(df_by_file, use_container_width=True)
-
     except Exception as e:
         st.error(f"Ne mogu da pročitam bazu: {e}")
         st.stop()
 
-# ---------- Tab 2: Izveštaji ----------
+# =========================
+#  Tab 2: Izveštaji
+# =========================
 with tab2:
     st.subheader("Suma NetoTone po mesecu")
-    q_month = f"""
-        SELECT
-          date_trunc('month', DatumVreme) AS mesec,
-          SUM(COALESCE("NetoTone", 0)) AS ukupno_tona
-        FROM "{table_name}"
+    df_month = run_sql(db_path, """
+        SELECT date_trunc('month', DatumVreme) AS mesec,
+               SUM(COALESCE("NetoTone", 0)) AS ukupno_tona
+        FROM kola_view
         WHERE DatumVreme IS NOT NULL
         GROUP BY 1
         ORDER BY 1
-    """
-    df_month = run_sql(db_path, q_month)
-    st.line_chart(df_month.set_index("mesec")["ukupno_tona"])
+    """)
+    if not df_month.empty:
+        st.line_chart(df_month.set_index("mesec")["ukupno_tona"])
 
     st.subheader("Top 20 stanica po broju vagona")
-    q_sta = f"""
+    df_sta = run_sql(db_path, """
         SELECT "Stanica", COUNT(*) AS broj
-        FROM "{table_name}"
+        FROM kola_view
         GROUP BY "Stanica"
         ORDER BY broj DESC
         LIMIT 20
-    """
-    df_sta = run_sql(db_path, q_sta)
-    st.bar_chart(df_sta.set_index("Stanica")["broj"])
+    """)
+    if not df_sta.empty:
+        st.bar_chart(df_sta.set_index("Stanica")["broj"])
 
     c1, c2 = st.columns(2)
     with c1:
         st.subheader("Prosečna NetoTone po tipu kola")
-        q_tip = f"""
+        df_tip = run_sql(db_path, """
             SELECT "Tip kola" AS tip, AVG(COALESCE("NetoTone", 0)) AS prosek_tona
-            FROM "{table_name}"
+            FROM kola_view
             GROUP BY tip
             ORDER BY prosek_tona DESC
             LIMIT 20
-        """
-        df_tip = run_sql(db_path, q_tip)
+        """)
         st.dataframe(df_tip, use_container_width=True)
     with c2:
         st.subheader("Prosečna tara po tipu kola")
-        q_tara = f"""
+        df_tara = run_sql(db_path, """
             SELECT "Tip kola" AS tip, AVG(COALESCE("tara", 0)) AS prosek_tare
-            FROM "{table_name}"
+            FROM kola_view
             GROUP BY tip
             ORDER BY prosek_tare DESC
             LIMIT 20
-        """
-        df_tara = run_sql(db_path, q_tara)
+        """)
         st.dataframe(df_tara, use_container_width=True)
 
-# ---------- Tab 3: SQL upiti ----------
+# =========================
+#  Tab 3: SQL upiti
+# =========================
 with tab3:
-    st.subheader("Piši svoj SQL")
-    default_sql = f'SELECT * FROM "{table_name}" LIMIT 100'
+    st.subheader("Piši svoj SQL (koristi npr. kola_view, stanje, stanice)")
+    default_sql = "SELECT * FROM kola_view LIMIT 100"
     user_sql = st.text_area("SQL:", height=160, value=default_sql)
     colx, coly = st.columns([1, 3])
     run_btn = colx.button("▶️ Izvrši upit")
@@ -270,81 +261,90 @@ with tab3:
         except Exception as e:
             st.error(f"Greška u upitu: {e}")
 
-# ---------- Tab 4: Pregled podataka ----------
+# =========================
+#  Tab 4: Pregled podataka
+# =========================
 with tab4:
     st.subheader("Brzi pregled")
     limit = st.slider("Broj redova (LIMIT)", 10, 2000, 200)
     cols = st.multiselect(
         "Kolone",
         [
-            "Režim", "Vlasnik", "Serija", "Inv br", "KB", "Tip kola",
-            "Voz br", "Stanica", "Status", "Datum", "Vreme", "Roba", "Reon",
-            "tara", "NetoTone", "Broj vagona", "Broj kola", "source_file", "DatumVreme"
+            "Režim","Vlasnik","Serija","Inv br","KB","Tip kola","Voz br","Stanica","Status",
+            "Datum","Vreme","Roba","Reon","tara","NetoTone","Broj vagona","Broj kola",
+            "source_file","DatumVreme","broj_kola_bez_rezima_i_kb"
         ],
-        default=["DatumVreme", "Stanica", "Tip kola", "NetoTone", "tara", "source_file"]
+        default=["DatumVreme","Stanica","Tip kola","NetoTone","tara","source_file"]
     )
     try:
         cols_sql = ", ".join([f'"{c}"' if c not in ("DatumVreme",) else c for c in cols])
-        df_preview = run_sql(db_path, f'SELECT {cols_sql} FROM "{table_name}" LIMIT {int(limit)}')
+        df_preview = run_sql(db_path, f"SELECT {cols_sql} FROM kola_view LIMIT {int(limit)}")
         st.dataframe(df_preview, use_container_width=True)
     except Exception as e:
         st.error(f"Greška pri čitanju: {e}")
-# ---------- Tab 5: Poslednje stanje kola ----------
 
-# ---------- Tab 5: Poslednji unosi ----------
+# =========================
+#  Tab 5: Poslednji unosi (za 4098 iz 'stanje')
+# =========================
 with tab5:
-    st.subheader("📌 Poslednji unos za 4098 kola iz Excel tabele")
-
+    st.subheader("📌 Poslednji unos za 4098 kola iz Excel tabele (stanje)")
     if st.button("🔎 Prikaži poslednje unose"):
         try:
-            q_last = f"""
-                SELECT s.SerijaIpodserija, k.*
-                FROM stanje s
-                JOIN "{table_name}" k
-                  ON CAST(s.SerijaIpodserija AS TEXT) = REPLACE(k.broj_kola_bez_rezima_i_kb, ' ', '')
-                QUALIFY ROW_NUMBER() OVER (
-                    PARTITION BY s.SerijaIpodserija
-                    ORDER BY k.DatumVreme DESC
-                ) = 1
+            q_last = """
+                WITH poslednji AS (
+                    SELECT 
+                        s.SerijaIpodserija,
+                        k.*,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY s.SerijaIpodserija
+                            ORDER BY k.DatumVreme DESC
+                        ) AS rn
+                    FROM stanje s
+                    JOIN kola_view k
+                      ON TRIM(CAST(s.SerijaIpodserija AS VARCHAR)) = TRIM(CAST(k.broj_kola_bez_rezima_i_kb AS VARCHAR))
+                )
+                SELECT * FROM poslednji WHERE rn = 1
             """
             df_last = run_sql(db_path, q_last)
-            st.success(f"✅ Pronađeno {len(df_last)} poslednjih unosa za kola iz Excel tabele.")
+            st.success(f"✅ Pronađeno {len(df_last)} poslednjih unosa.")
             st.dataframe(df_last, use_container_width=True)
         except Exception as e:
             st.error(f"Greška u upitu: {e}")
-# ---------- Tab 6: Pretraga kola ----------
+
+# =========================
+#  Tab 6: Pretraga kola
+# =========================
 with tab6:
     st.subheader("🔍 Pretraga kola po broju i periodu")
-
     broj_kola_input = st.text_input("Unesi broj kola (ili deo broja)")
     col1, col2 = st.columns(2)
     with col1:
         start_date = st.date_input("📅 Od datuma")
     with col2:
         end_date = st.date_input("📅 Do datuma")
-
     if st.button("🔎 Pretraži"):
         try:
             q_search = f"""
                 SELECT *
-                FROM "{table_name}"
+                FROM kola_view
                 WHERE "Broj kola" LIKE '%{broj_kola_input}%'
-                  AND "DatumVreme" BETWEEN '{start_date}' AND '{end_date}'
-                ORDER BY "DatumVreme" DESC
+                  AND DatumVreme BETWEEN '{start_date}' AND '{end_date}'
+                ORDER BY DatumVreme DESC
             """
             df_search = run_sql(db_path, q_search)
-
             if df_search.empty:
                 st.warning("⚠️ Nema podataka za zadate kriterijume.")
             else:
                 st.success(f"✅ Pronađeno {len(df_search)} redova.")
                 st.dataframe(df_search, use_container_width=True)
-
         except Exception as e:
             st.error(f"Greška u upitu: {e}")
-with tab7:
-    st.subheader("📊 Kola po stanicima")
 
+# =========================
+#  Tab 7: Kola po stanicama (pivot + detalji)
+# =========================
+with tab7:
+    st.subheader("📊 Kola po stanicama")
     try:
         q = """
         WITH poslednji AS (
@@ -357,94 +357,72 @@ with tab7:
                     PARTITION BY k.broj_kola_bez_rezima_i_kb
                     ORDER BY k.DatumVreme DESC
                 ) AS rn
-            FROM kola k
-            JOIN stanje s 
+            FROM kola_view k
+            JOIN stanje s
               ON TRIM(CAST(k.broj_kola_bez_rezima_i_kb AS VARCHAR)) = TRIM(CAST(s.SerijaIpodserija AS VARCHAR))
             LEFT JOIN stanice st
               ON TRIM(CAST(k.Stanica AS VARCHAR)) = TRIM(CAST(st.Sifra AS VARCHAR))
         )
-        SELECT *
-        FROM poslednji
-        WHERE rn = 1
+        SELECT * FROM poslednji WHERE rn = 1
         """
         df_last = run_sql(db_path, q)
 
-        # Pivot tabela po stanici
+        # Pivot po stanici (TIP 0/1)
         df_pivot = (
             df_last.groupby(["Stanica", "NazivStanice", "TIP"])
-            .size()
-            .unstack(fill_value=0)
-            .reset_index()
+            .size().unstack(fill_value=0).reset_index()
         )
-
-        if 0 not in df_pivot.columns:
-            df_pivot[0] = 0
-        if 1 not in df_pivot.columns:
-            df_pivot[1] = 0
-
+        if 0 not in df_pivot.columns: df_pivot[0] = 0
+        if 1 not in df_pivot.columns: df_pivot[1] = 0
         df_pivot = df_pivot.rename(columns={0: "tip0", 1: "tip1"})
         df_pivot["Ukupno"] = df_pivot["tip0"] + df_pivot["tip1"]
 
-        # Dodaj red Σ
+        # Σ red
         total_row = {
             "Stanica": "Σ",
             "NazivStanice": "Ukupno",
-            "tip0": df_pivot["tip0"].sum(),
-            "tip1": df_pivot["tip1"].sum(),
-            "Ukupno": df_pivot["Ukupno"].sum()
+            "tip0": int(df_pivot["tip0"].sum()),
+            "tip1": int(df_pivot["tip1"].sum()),
+            "Ukupno": int(df_pivot["Ukupno"].sum()),
         }
         df_pivot = pd.concat([df_pivot, pd.DataFrame([total_row])], ignore_index=True)
 
-        # Dva dela ekrana
-        left, right = st.columns([1, 1])
-
+        left, right = st.columns(2)
         with left:
             st.markdown("### 📋 Ukupan broj kola (po stanicama)")
             st.dataframe(df_pivot, use_container_width=True)
 
         with right:
             st.markdown("### 📍 Klikni / izaberi stanicu")
-
             station_list = df_pivot[df_pivot["Stanica"] != "Σ"]["NazivStanice"].tolist()
             selected_station = st.selectbox("", ["Nijedna"] + station_list)
-
             if selected_station != "Nijedna":
                 st.markdown(f"### 🔎 Detalji za stanicu: **{selected_station}**")
-
                 stanica_id = df_pivot.loc[df_pivot["NazivStanice"] == selected_station, "Stanica"].iloc[0]
                 df_detail = (
                     df_last[df_last["Stanica"] == stanica_id]
-                    .groupby(["Serija", "TIP"])
-                    .size()
-                    .unstack(fill_value=0)
-                    .reset_index()
+                    .groupby(["Serija", "TIP"]).size().unstack(fill_value=0).reset_index()
                 )
-
-                if 0 not in df_detail.columns:
-                    df_detail[0] = 0
-                if 1 not in df_detail.columns:
-                    df_detail[1] = 0
-
+                if 0 not in df_detail.columns: df_detail[0] = 0
+                if 1 not in df_detail.columns: df_detail[1] = 0
                 df_detail = df_detail.rename(columns={0: "tip0", 1: "tip1"})
                 df_detail["Ukupno"] = df_detail["tip0"] + df_detail["tip1"]
-
-                # Dodaj red Σ
                 total = {
                     "Serija": "Σ",
-                    "tip0": df_detail["tip0"].sum(),
-                    "tip1": df_detail["tip1"].sum(),
-                    "Ukupno": df_detail["Ukupno"].sum()
+                    "tip0": int(df_detail["tip0"].sum()),
+                    "tip1": int(df_detail["tip1"].sum()),
+                    "Ukupno": int(df_detail["Ukupno"].sum()),
                 }
                 df_detail = pd.concat([df_detail, pd.DataFrame([total])], ignore_index=True)
-
                 st.dataframe(df_detail, use_container_width=True)
-
     except Exception as e:
         st.error(f"Greška: {e}")
 
-
+# =========================
+#  Tab 8: TIP 0 (4098) – od najnovijeg ka najstarijem
+# =========================
 with tab8:
-    st.subheader("🚂 Kretanje 4098 kola – samo TIP 0")
+    st.subheader("🚂 Kretanje 4098 kola – samo TIP 0 (od najnovijeg ka najstarijem)")
 
     try:
         q = """
@@ -464,7 +442,7 @@ with tab8:
                     ORDER BY k.DatumVreme DESC
                 ) AS rn
             FROM stanje s
-            LEFT JOIN kola k 
+            LEFT JOIN kola_view k 
               ON TRIM(CAST(s.SerijaIpodserija AS VARCHAR)) = TRIM(CAST(k.broj_kola_bez_rezima_i_kb AS VARCHAR))
             LEFT JOIN stanice st
               ON TRIM(CAST(k.Stanica AS VARCHAR)) = TRIM(CAST(st.Sifra AS VARCHAR))
@@ -489,41 +467,36 @@ with tab8:
         if "BrojDana" in df_tip0.columns:
             df_tip0["BrojDana"] = df_tip0["BrojDana"].astype("Int64")
 
-        # --- Filter po seriji ---
+        # Filteri
         series_options = ["Sve serije"] + sorted(df_tip0["Serija"].dropna().unique().tolist())
         selected_series = st.selectbox("🚆 Filtriraj po seriji kola", series_options, key="tip0_series")
-
         if selected_series != "Sve serije":
             df_tip0 = df_tip0[df_tip0["Serija"] == selected_series]
 
-        # --- Filter po stanici ---
         station_options = ["Sve stanice"] + sorted(df_tip0["NazivStanice"].dropna().unique().tolist())
         selected_station = st.selectbox("📍 Filtriraj po stanici", station_options, key="tip0_station")
-
         if selected_station != "Sve stanice":
             df_tip0 = df_tip0[df_tip0["NazivStanice"] == selected_station]
 
-        # Prikaz tabele
         st.dataframe(df_tip0, use_container_width=True)
 
-        # Export CSV / Excel
         c1, c2 = st.columns(2)
         with c1:
             csv = df_tip0.to_csv(index=False).encode("utf-8")
             st.download_button("⬇️ Preuzmi tabelu (CSV)", csv, "tip0_kretanje.csv", "text/csv")
         with c2:
-            import io
-            import pandas as pd
             excel_bytes = io.BytesIO()
             with pd.ExcelWriter(excel_bytes, engine="openpyxl") as writer:
                 df_tip0.to_excel(writer, sheet_name="TIP0", index=False)
             st.download_button("⬇️ Preuzmi tabelu (Excel)", excel_bytes.getvalue(), "tip0_kretanje.xlsx")
-
     except Exception as e:
         st.error(f"Greška: {e}")
-with tab9:
-    st.subheader("🚂 Kretanje 4098 kola–samo TIP 1")
 
+# =========================
+#  Tab 9: TIP 1 (4098) – od najnovijeg ka najstarijem
+# =========================
+with tab9:
+    st.subheader("🚂 Kretanje 4098 kola – samo TIP 1 (od najnovijeg ka najstarijem)")
     try:
         q = """
         WITH poslednji AS (
@@ -531,9 +504,9 @@ with tab9:
                 s.SerijaIpodserija,
                 s.TIP,
                 s.TelegBaza,
-                k.Serija,
                 s.PR,
                 s.NR,
+                k.Serija,
                 k.Stanica,
                 st.Naziv AS NazivStanice,
                 k.DatumVreme,
@@ -542,7 +515,7 @@ with tab9:
                     ORDER BY k.DatumVreme DESC
                 ) AS rn
             FROM stanje s
-            LEFT JOIN kola k 
+            LEFT JOIN kola_view k 
               ON TRIM(CAST(s.SerijaIpodserija AS VARCHAR)) = TRIM(CAST(k.broj_kola_bez_rezima_i_kb AS VARCHAR))
             LEFT JOIN stanice st
               ON TRIM(CAST(k.Stanica AS VARCHAR)) = TRIM(CAST(st.Sifra AS VARCHAR))
@@ -560,48 +533,43 @@ with tab9:
             datediff('day', DatumVreme, current_date) AS BrojDana
         FROM poslednji
         WHERE rn = 1 OR rn IS NULL
-        ORDER BY BrojDana DESC
+        ORDER BY BrojDana ASC
         """
         df_tip1 = run_sql(db_path, q)
 
-        # Ako nema DatumVreme → BrojDana će biti NaN
         if "BrojDana" in df_tip1.columns:
             df_tip1["BrojDana"] = df_tip1["BrojDana"].astype("Int64")
 
-         # --- Filter po seriji ---
+        # Filteri
         series_options = ["Sve serije"] + sorted(df_tip1["Serija"].dropna().unique().tolist())
         selected_series = st.selectbox("🚆 Filtriraj po seriji kola", series_options, key="tip1_series")
-
         if selected_series != "Sve serije":
             df_tip1 = df_tip1[df_tip1["Serija"] == selected_series]
 
-        # --- Filter po stanici ---
         station_options = ["Sve stanice"] + sorted(df_tip1["NazivStanice"].dropna().unique().tolist())
         selected_station = st.selectbox("📍 Filtriraj po stanici", station_options, key="tip1_station")
-
         if selected_station != "Sve stanice":
             df_tip1 = df_tip1[df_tip1["NazivStanice"] == selected_station]
 
         st.dataframe(df_tip1, use_container_width=True)
 
-        # Export CSV / Excel
         c1, c2 = st.columns(2)
         with c1:
             csv = df_tip1.to_csv(index=False).encode("utf-8")
             st.download_button("⬇️ Preuzmi tabelu (CSV)", csv, "tip1_kretanje.csv", "text/csv")
         with c2:
-            import io
-            import pandas as pd
             excel_bytes = io.BytesIO()
             with pd.ExcelWriter(excel_bytes, engine="openpyxl") as writer:
                 df_tip1.to_excel(writer, sheet_name="TIP1", index=False)
             st.download_button("⬇️ Preuzmi tabelu (Excel)", excel_bytes.getvalue(), "tip1_kretanje.xlsx")
-
     except Exception as e:
         st.error(f"Greška: {e}")
+
+# =========================
+#  Tab 10: Pivot po serijama (sa detaljima)
+# =========================
 with tab10:
     st.subheader("📊 Pivot po seriji i stanicama")
-
     try:
         q = """
         WITH poslednji AS (
@@ -614,87 +582,61 @@ with tab10:
                     PARTITION BY k.broj_kola_bez_rezima_i_kb
                     ORDER BY k.DatumVreme DESC
                 ) AS rn
-            FROM kola k
-            JOIN stanje s 
+            FROM kola_view k
+            JOIN stanje s
               ON TRIM(CAST(k.broj_kola_bez_rezima_i_kb AS VARCHAR)) = TRIM(CAST(s.SerijaIpodserija AS VARCHAR))
             LEFT JOIN stanice st
               ON TRIM(CAST(k.Stanica AS VARCHAR)) = TRIM(CAST(st.Sifra AS VARCHAR))
         )
-        SELECT *
-        FROM poslednji
-        WHERE rn = 1
+        SELECT * FROM poslednji WHERE rn = 1
         """
         df_last = run_sql(db_path, q)
 
-        # Pivot tabela po seriji
         df_pivot = (
-            df_last.groupby(["Serija", "TIP"])
-            .size()
-            .unstack(fill_value=0)
-            .reset_index()
+            df_last.groupby(["Serija", "TIP"]).size().unstack(fill_value=0).reset_index()
         )
-
-        if 0 not in df_pivot.columns:
-            df_pivot[0] = 0
-        if 1 not in df_pivot.columns:
-            df_pivot[1] = 0
-
+        if 0 not in df_pivot.columns: df_pivot[0] = 0
+        if 1 not in df_pivot.columns: df_pivot[1] = 0
         df_pivot = df_pivot.rename(columns={0: "tip0", 1: "tip1"})
         df_pivot["Ukupno"] = df_pivot["tip0"] + df_pivot["tip1"]
 
-        # Dodaj red Σ
         total_row = {
             "Serija": "Σ",
-            "tip0": df_pivot["tip0"].sum(),
-            "tip1": df_pivot["tip1"].sum(),
-            "Ukupno": df_pivot["Ukupno"].sum()
+            "tip0": int(df_pivot["tip0"].sum()),
+            "tip1": int(df_pivot["tip1"].sum()),
+            "Ukupno": int(df_pivot["Ukupno"].sum())
         }
         df_pivot = pd.concat([df_pivot, pd.DataFrame([total_row])], ignore_index=True)
 
-        # Dva dela ekrana
-        left, right = st.columns([1, 1])
-
+        left, right = st.columns(2)
         with left:
             st.markdown("### 📋 Ukupan broj kola (po serijama)")
             st.dataframe(df_pivot, use_container_width=True)
 
         with right:
             st.markdown("### 🚆 Klikni / izaberi seriju")
-
             series_list = df_pivot[df_pivot["Serija"] != "Σ"]["Serija"].tolist()
             selected_series = st.selectbox("", ["Nijedna"] + series_list)
-
             if selected_series != "Nijedna":
                 st.markdown(f"### 🔎 Detalji za seriju: **{selected_series}**")
-
                 df_detail = (
                     df_last[df_last["Serija"] == selected_series]
                     .groupby(["Stanica", "NazivStanice", "TIP"])
-                    .size()
-                    .unstack(fill_value=0)
-                    .reset_index()
+                    .size().unstack(fill_value=0).reset_index()
                 )
-
-                if 0 not in df_detail.columns:
-                    df_detail[0] = 0
-                if 1 not in df_detail.columns:
-                    df_detail[1] = 0
-
+                if 0 not in df_detail.columns: df_detail[0] = 0
+                if 1 not in df_detail.columns: df_detail[1] = 0
                 df_detail = df_detail.rename(columns={0: "tip0", 1: "tip1"})
                 df_detail["Ukupno"] = df_detail["tip0"] + df_detail["tip1"]
 
-                # Dodaj red Σ
                 total = {
                     "Stanica": "Σ",
                     "NazivStanice": "Ukupno",
-                    "tip0": df_detail["tip0"].sum(),
-                    "tip1": df_detail["tip1"].sum(),
-                    "Ukupno": df_detail["Ukupno"].sum()
+                    "tip0": int(df_detail["tip0"].sum()),
+                    "tip1": int(df_detail["tip1"].sum()),
+                    "Ukupno": int(df_detail["Ukupno"].sum())
                 }
                 df_detail = pd.concat([df_detail, pd.DataFrame([total])], ignore_index=True)
-
                 st.dataframe(df_detail, use_container_width=True)
-
     except Exception as e:
         st.error(f"Greška: {e}")
-
