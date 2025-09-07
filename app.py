@@ -10,7 +10,18 @@ import streamlit as st
 # =========================
 #  Konstante / Baze
 # =========================
-DB_URL = DB_URL = "https://drive.google.com/uc?export=download&id=1SbaxHotQ0BlNxts5f7tawLIQoWNu-hCG"
+DB_URL = "https://drive.google.com/uc?export=download&id=1SbaxHotQ0BlNxts5f7tawLIQoWNu-hCG"
+
+# Provera preuzimanja
+with st.spinner("⬇ Preuzimam bazu sa Drive-a..."):
+    r = requests.get(DB_URL)
+    # ako HTML, brzo obustavi i javi
+    if b"<html" in r.content[:100]:
+        st.error("Preuzet fajl je HTML, proveri da li si zamenio link u kodu na direktan 'uc?export=download&id=...' URL.")
+    else:
+        with open(MAIN_DB, "wb") as f:
+            f.write(r.content)
+        st.success("✅ Baza uspešno preuzeta i spremna za upotrebu")
 MAIN_DB = "kola_sk.db"            # glavna baza (preuzimamo ako je nema)
 UPDATE_DB = "kola_sk_update.db"   # opciona lokalna "update" baza
 
