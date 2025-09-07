@@ -41,7 +41,7 @@ def run_sql(db_path: str, sql: str) -> pd.DataFrame:
     """
     con = duckdb.connect()
     try:
-        con.execute(f"ATTACH '{os.path.abspath(MAIN_DB)}' AS main")
+        con.execute(f"ATTACH '{os.path.abspath(MAIN_DB)}' AS glavna")
         has_upd = os.path.exists(UPDATE_DB)
         if has_upd:
             con.execute(f"ATTACH '{os.path.abspath(UPDATE_DB)}' AS upd")
@@ -55,20 +55,20 @@ def run_sql(db_path: str, sql: str) -> pd.DataFrame:
             """
             return con.execute(q).fetchone()[0] > 0
 
-        has_main_kola = table_exists("main", "kola")
+        has_glavna_kola = table_exists("glavna", "kola")
         has_upd_kola = has_upd and table_exists("upd", "kola_update")
 
-        if has_main_kola and has_upd_kola:
+        if has_glavna_kola and has_upd_kola:
             con.execute("""
                 CREATE OR REPLACE VIEW kola_view AS
-                SELECT * FROM main.kola
+                SELECT * FROM glavna.kola
                 UNION ALL
                 SELECT * FROM upd.kola_update
             """)
-        elif has_main_kola:
-            con.execute("""CREATE OR REPLACE VIEW kola_view AS SELECT * FROM main.kola""")
+        elif has_glavna_kola:
+            con.execute("""CREATE OR REPLACE VIEW kola_view AS SELECT * FROM glavna.kola""")
         else:
-            # Ako ni main.kola ne postoji, napravi prazan view sa očekivanim kolonama
+            # Ako ni glavna.kola ne postoji, napravi prazan view sa očekivanim kolonama
             con.execute("""
                 CREATE OR REPLACE VIEW kola_view AS
                 SELECT 
