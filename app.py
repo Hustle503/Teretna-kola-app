@@ -5,13 +5,24 @@ import glob
 import requests
 import duckdb
 import pandas as pd
+import gdown
 import streamlit as st
+# --- ID tvoje baze sa Google Drive-a ---
+FILE_ID = "1SbaxHotQ0BlNxts5f7tawLIQoWNu-hCG"
+DB_PATH = "kola_sk.db"
 
-# =========================
-#  Konstante / Baze
-# =========================
-DB_URL = "https://drive.google.com/uc?export=download&id=1SbaxHotQ0BlNxts5f7tawLIQoWNu-hCG"
-# Provera preuzimanja
+# --- URL za gdown ---
+URL = f"https://drive.google.com/uc?id={FILE_ID}"
+
+# --- Preuzimanje baze ako ne postoji ---
+if not os.path.exists(DB_PATH):
+    with st.spinner("⬇ Preuzimam glavnu bazu sa Google Drive-a..."):
+        try:
+            gdown.download(URL, DB_PATH, quiet=False, fuzzy=True)
+            st.success("✅ Glavna baza uspešno preuzeta!")
+        except Exception as e:
+            st.error(f"❌ Greška pri preuzimanju baze: {e}")
+
 with st.spinner("⬇ Preuzimam bazu sa Drive-a..."):
     r = requests.get(DB_URL)
     # ako HTML, brzo obustavi i javi
