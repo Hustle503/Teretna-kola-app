@@ -32,27 +32,38 @@ db_path = os.path.abspath(MAIN_DB)
 # =========================
 #  Helper funkcije
 # =========================
-def run_sql(sql: str) -> pd.DataFrame:
-    """Izvrši upit nad UNION bazom (glavna + update)."""
-    con = duckdb.connect()
+def run_sql(db_path: str, sql: str) -> pd.DataFrame:
+    """
+    Izvršava SQL upit nad spojenim bazama (MAIN_DB + UPDATE_DB).
+    Argument db_path se ignoriše, ostavljen je zbog kompatibilnosti.
+    """
+    try:
+        con = duckdb.connect()
+        con.execute(f"ATTACH '{MAIN_DB}' AS main_db")
+        if os.path.exists(UPDATE_DB):
+            con.execute(f"ATTACH '{UPDATE_DB}' AS update_db")
+            query = f"""
+                WITH kola_view AS (
+                    SELECT * FROM main_db.kola
+                    UNION ALL
+                    SELECT * FROM update_db.kola
+                )
+                {sql}
+            """
+        else:
+            query = f"""
+                WITH kola_view AS (
+                    SELECT * FROM main_db.kola
+                )
+                {sql}
+            """
 
-    # ATTACH glavnu i update bazu sa drugim imenima
-    con.execute(f"ATTACH '{MAIN_DB}' AS db_main")
-    if os.path.exists(UPDATE_DB):
-        con.execute(f"ATTACH '{UPDATE_DB}' AS db_upd")
-
-    # Proverimo da li postoje tabele pre kreiranja view-a
-    def table_exists(db_alias: str, tbl: str) -> bool:
-        q = f"""
-            SELECT COUNT(*) AS n
-            FROM {db_alias}.information_schema.tables
-            WHERE table_name = '{tbl}'
-        """
-        return con.execute(q).fetchone()[0] > 0
-
-    has_main_kola = table_exists("db_main", "kola")
-    has_upd_kola = os.path.exists(UPDATE_DB) and table_exists("db_upd", "kola_update")
-
+        df = con.execute(query).fetchdf()
+        con.close()
+        return df
+    except Exception as e:
+        st.error(f"Ne mogu da pročitam bazu: {e}")
+        return pd.DataFrame()
     if has_main_kola and has_upd_kola:
         con.execute("""
             CREATE OR REPLACE VIEW kola_view AS
