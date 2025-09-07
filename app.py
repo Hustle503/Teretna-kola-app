@@ -10,7 +10,7 @@ import streamlit as st
 # =========================
 #  Konstante / Baze
 # =========================
-DB_URL = "https://drive.google.com/uc?export=download&id=1SbaxHotQ0BlNxts5f7tawLIQoWNu-hCG"
+DB_URL = DB_URL = "https://drive.google.com/uc?export=download&id=1SbaxHotQ0BlNxts5f7tawLIQoWNu-hCG"
 MAIN_DB = "kola_sk.db"            # glavna baza (preuzimamo ako je nema)
 UPDATE_DB = "kola_sk_update.db"   # opciona lokalna "update" baza
 
