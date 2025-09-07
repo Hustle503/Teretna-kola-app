@@ -1,9 +1,8 @@
 import os
 import time
 import io
-import glob
 import requests
-import duckdb
+import sqlite3
 import pandas as pd
 import streamlit as st
 
@@ -11,8 +10,8 @@ import streamlit as st
 #  Konstante / Baze
 # =========================
 DB_URL = "https://drive.google.com/uc?export=download&id=1SbaxHotQ0BlNxts5f7tawLIQoWNu-hCG"
-MAIN_DB = "kola_sk.db"            # glavna baza (preuzimamo ako je nema)
-UPDATE_DB = "kola_sk_update.db"   # opciona lokalna "update" baza
+MAIN_DB = "kola_sk.db"            # glavna baza (SQLite fajl)
+UPDATE_DB = "kola_sk_update.db"   # opciona lokalna "update" baza (isto SQLite)
 
 # =========================
 #  Preuzimanje glavne baze
@@ -26,92 +25,45 @@ if not os.path.exists(MAIN_DB):
                 f.write(chunk)
     st.success("✅ Glavna baza uspešno preuzeta sa Google Drive-a!")
 
-# Aktivna putanja do baze
-db_path = os.path.abspath(MAIN_DB)
-
 # =========================
 #  Helper funkcije
 # =========================
-def run_sql(db_path: str, sql: str) -> pd.DataFrame:
+def run_sql(sql: str) -> pd.DataFrame:
     """
-    Izvršava SQL upit nad spojenim bazama (MAIN_DB + UPDATE_DB).
-    Argument db_path se ignoriše, ostavljen je zbog kompatibilnosti.
+    Izvršava SQL upit nad SQLite bazom.
+    Ako postoji i UPDATE_DB, pravi UNION (view).
     """
     try:
-        con = duckdb.connect()
-        con.execute(f"ATTACH '{MAIN_DB}' AS main_db")
-        if os.path.exists(UPDATE_DB):
-            con.execute(f"ATTACH '{UPDATE_DB}' AS update_db")
-            query = f"""
-                WITH kola_view AS (
-                    SELECT * FROM main_db.kola
-                    UNION ALL
-                    SELECT * FROM update_db.kola
-                )
-                {sql}
-            """
-        else:
-            query = f"""
-                WITH kola_view AS (
-                    SELECT * FROM main_db.kola
-                )
-                {sql}
-            """
+        con = sqlite3.connect(MAIN_DB)
 
-        df = con.execute(query).fetchdf()
+        # Ako postoji update baza, spoji je
+        if os.path.exists(UPDATE_DB):
+            con.execute(f"ATTACH DATABASE '{UPDATE_DB}' AS upd")
+
+            # kreiraj pogled kola_view
+            con.execute("""
+                CREATE TEMP VIEW IF NOT EXISTS kola_view AS
+                SELECT * FROM main.kola
+                UNION ALL
+                SELECT * FROM upd.kola
+            """)
+        else:
+            con.execute("""
+                CREATE TEMP VIEW IF NOT EXISTS kola_view AS
+                SELECT * FROM main.kola
+            """)
+
+        df = pd.read_sql_query(sql, con)
         con.close()
         return df
     except Exception as e:
         st.error(f"Ne mogu da pročitam bazu: {e}")
         return pd.DataFrame()
-    if has_main_kola and has_upd_kola:
-        con.execute("""
-            CREATE OR REPLACE VIEW kola_view AS
-            SELECT * FROM db_main.kola
-            UNION ALL
-            SELECT * FROM db_upd.kola_update
-        """)
-    elif has_main_kola:
-        con.execute("CREATE OR REPLACE VIEW kola_view AS SELECT * FROM db_main.kola")
-    else:
-        # Ako ni main.kola ne postoji, napravi prazan view sa očekivanim kolonama
-        con.execute("""
-            CREATE OR REPLACE VIEW kola_view AS
-            SELECT 
-                CAST(NULL AS VARCHAR) AS "Režim",
-                CAST(NULL AS VARCHAR) AS "Vlasnik",
-                CAST(NULL AS VARCHAR) AS "Serija",
-                CAST(NULL AS INT)     AS "Inv br",
-                CAST(NULL AS VARCHAR) AS "KB",
-                CAST(NULL AS VARCHAR) AS "Tip kola",
-                CAST(NULL AS VARCHAR) AS "Voz br",
-                CAST(NULL AS VARCHAR) AS "Stanica",
-                CAST(NULL AS VARCHAR) AS "Status",
-                CAST(NULL AS VARCHAR) AS "Datum",
-                CAST(NULL AS VARCHAR) AS "Vreme",
-                CAST(NULL AS VARCHAR) AS "Roba",
-                CAST(NULL AS VARCHAR) AS "Reon",
-                CAST(NULL AS INT)     AS "tara",
-                CAST(NULL AS INT)     AS "NetoTone",
-                CAST(NULL AS VARCHAR) AS "Broj vagona",
-                CAST(NULL AS VARCHAR) AS "Broj kola",
-                CAST(NULL AS VARCHAR) AS "source_file",
-                CAST(NULL AS TIMESTAMP) AS "DatumVreme",
-                CAST(NULL AS VARCHAR) AS "broj_kola_bez_rezima_i_kb"
-            WHERE FALSE
-        """)
-
-    try:
-        return con.execute(sql).fetchdf()
-    finally:
-        con.close()
 
 def create_or_replace_table_from_df(db_file: str, table_name: str, df: pd.DataFrame):
-    con = duckdb.connect(db_file)
+    con = sqlite3.connect(db_file)
     try:
-        con.register("df_tmp", df)
-        con.execute(f'CREATE OR REPLACE TABLE "{table_name}" AS SELECT * FROM df_tmp')
-        con.unregister("df_tmp")
+        df.to_sql(table_name, con, if_exists="replace", index=False)
     finally:
         con.close()
 
@@ -119,8 +71,7 @@ def create_or_replace_table_from_df(db_file: str, table_name: str, df: pd.DataFr
 #  SIDEBAR
 # =========================
 st.sidebar.title("⚙️ Podešavanja")
-
-st.sidebar.caption("Glavna baza: kola_sk.db (auto download). Opciona lokalna baza za UNION: kola_sk_update.db")
+st.sidebar.caption("Glavna baza: kola_sk.db (SQLite). Opciona lokalna baza: kola_sk_update.db")
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("📂 Uvoz Excela → tabela 'stanje'")
@@ -153,14 +104,7 @@ st.sidebar.caption("Sve tabele možete koristiti u SQL upitima. Glavni podaci su
 # =========================
 st.title("🚃 Teretna kola SK — kontrolna tabla")
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
-    "📊 Pregled", "📈 Izveštaji", "🔎 SQL upiti", "🔬 Pregled podataka",
-    "📌 Poslednji unosi", "🔍 Pretraga kola",
-    "📊 Kola po stanicama",
-    "🚂 Kretanje 4098 kola – TIP 0",
-    "🚂 Kretanje 4098 kola – TIP 1",
-    "📊 Kola po serijama"
-])
+tab1, tab2, tab3 = st.tabs(["📊 Pregled", "📈 Izveštaji", "🔎 SQL upiti"])
 
 # =========================
 #  Tab 1: Pregled
@@ -168,13 +112,13 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
 with tab1:
     col_a, col_b, col_c, col_d = st.columns(4)
     try:
-        df_cnt = run_sql(db_path, "SELECT COUNT(*) AS broj_redova FROM kola_view")
+        df_cnt = run_sql("SELECT COUNT(*) AS broj_redova FROM kola_view")
         col_a.metric("Ukupan broj redova", f"{int(df_cnt['broj_redova'][0]):,}".replace(",", "."))
 
-        df_files = run_sql(db_path, "SELECT COUNT(DISTINCT source_file) AS fajlova FROM kola_view")
+        df_files = run_sql("SELECT COUNT(DISTINCT source_file) AS fajlova FROM kola_view")
         col_b.metric("Učitanih fajlova", int(df_files["fajlova"][0]))
 
-        df_range = run_sql(db_path, """
+        df_range = run_sql("""
             SELECT MIN(DatumVreme) AS min_dt, MAX(DatumVreme) AS max_dt
             FROM kola_view WHERE DatumVreme IS NOT NULL
         """)
@@ -185,7 +129,7 @@ with tab1:
 
         st.divider()
         st.subheader("Učitanih redova po fajlu (top 20)")
-        df_by_file = run_sql(db_path, """
+        df_by_file = run_sql("""
             SELECT source_file, COUNT(*) AS broj
             FROM kola_view
             GROUP BY source_file
@@ -202,8 +146,8 @@ with tab1:
 # =========================
 with tab2:
     st.subheader("Suma NetoTone po mesecu")
-    df_month = run_sql(db_path, """
-        SELECT date_trunc('month', DatumVreme) AS mesec,
+    df_month = run_sql("""
+        SELECT strftime('%Y-%m', DatumVreme) AS mesec,
                SUM(COALESCE("NetoTone", 0)) AS ukupno_tona
         FROM kola_view
         WHERE DatumVreme IS NOT NULL
@@ -212,39 +156,6 @@ with tab2:
     """)
     if not df_month.empty:
         st.line_chart(df_month.set_index("mesec")["ukupno_tona"])
-
-    st.subheader("Top 20 stanica po broju vagona")
-    df_sta = run_sql(db_path, """
-        SELECT "Stanica", COUNT(*) AS broj
-        FROM kola_view
-        GROUP BY "Stanica"
-        ORDER BY broj DESC
-        LIMIT 20
-    """)
-    if not df_sta.empty:
-        st.bar_chart(df_sta.set_index("Stanica")["broj"])
-
-    c1, c2 = st.columns(2)
-    with c1:
-        st.subheader("Prosečna NetoTone po tipu kola")
-        df_tip = run_sql(db_path, """
-            SELECT "Tip kola" AS tip, AVG(COALESCE("NetoTone", 0)) AS prosek_tona
-            FROM kola_view
-            GROUP BY tip
-            ORDER BY prosek_tona DESC
-            LIMIT 20
-        """)
-        st.dataframe(df_tip, use_container_width=True)
-    with c2:
-        st.subheader("Prosečna tara po tipu kola")
-        df_tara = run_sql(db_path, """
-            SELECT "Tip kola" AS tip, AVG(COALESCE("tara", 0)) AS prosek_tare
-            FROM kola_view
-            GROUP BY tip
-            ORDER BY prosek_tare DESC
-            LIMIT 20
-        """)
-        st.dataframe(df_tara, use_container_width=True)
 
 # =========================
 #  Tab 3: SQL upiti
@@ -258,7 +169,7 @@ with tab3:
     if run_btn:
         t0 = time.time()
         try:
-            df_user = run_sql(db_path, user_sql)
+            df_user = run_sql(user_sql)
             elapsed = time.time() - t0
             st.success(f"OK ({elapsed:.2f}s) — {len(df_user):,} redova".replace(",", "."))
             st.dataframe(df_user, use_container_width=True)
@@ -267,7 +178,6 @@ with tab3:
                 st.download_button("⬇️ Preuzmi CSV", data=csv, file_name="rezultat.csv", mime="text/csv")
         except Exception as e:
             st.error(f"Greška u upitu: {e}")
-
 # =========================
 #  Tab 4: Pregled podataka
 # =========================
