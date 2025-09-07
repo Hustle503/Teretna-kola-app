@@ -41,73 +41,56 @@ def run_sql(sql: str) -> pd.DataFrame:
     if os.path.exists(UPDATE_DB):
         con.execute(f"ATTACH '{UPDATE_DB}' AS db_upd")
 
-    # kreiramo view da uvek imamo objedinjene podatke
-    if "kola" in get_tables(MAIN_DB):
-        if os.path.exists(UPDATE_DB) and "kola_update" in get_tables(UPDATE_DB):
-            q_union = """
-                CREATE OR REPLACE VIEW kola_union AS
-                SELECT * FROM db_main.kola
-                UNION ALL
-                SELECT * FROM db_upd.kola_update
-            """
-            con.execute(q_union)
-        else:
-            con.execute("CREATE OR REPLACE VIEW kola_union AS SELECT * FROM db_main.kola")
+    # Proverimo da li postoje tabele pre kreiranja view-a
+    def table_exists(db_alias: str, tbl: str) -> bool:
+        q = f"""
+            SELECT COUNT(*) AS n
+            FROM {db_alias}.information_schema.tables
+            WHERE table_name = '{tbl}'
+        """
+        return con.execute(q).fetchone()[0] > 0
+
+    has_main_kola = table_exists("db_main", "kola")
+    has_upd_kola = os.path.exists(UPDATE_DB) and table_exists("db_upd", "kola_update")
+
+    if has_main_kola and has_upd_kola:
+        con.execute("""
+            CREATE OR REPLACE VIEW kola_view AS
+            SELECT * FROM db_main.kola
+            UNION ALL
+            SELECT * FROM db_upd.kola_update
+        """)
+    elif has_main_kola:
+        con.execute("CREATE OR REPLACE VIEW kola_view AS SELECT * FROM db_main.kola")
+    else:
+        # Ako ni main.kola ne postoji, napravi prazan view sa očekivanim kolonama
+        con.execute("""
+            CREATE OR REPLACE VIEW kola_view AS
+            SELECT 
+                CAST(NULL AS VARCHAR) AS "Režim",
+                CAST(NULL AS VARCHAR) AS "Vlasnik",
+                CAST(NULL AS VARCHAR) AS "Serija",
+                CAST(NULL AS INT)     AS "Inv br",
+                CAST(NULL AS VARCHAR) AS "KB",
+                CAST(NULL AS VARCHAR) AS "Tip kola",
+                CAST(NULL AS VARCHAR) AS "Voz br",
+                CAST(NULL AS VARCHAR) AS "Stanica",
+                CAST(NULL AS VARCHAR) AS "Status",
+                CAST(NULL AS VARCHAR) AS "Datum",
+                CAST(NULL AS VARCHAR) AS "Vreme",
+                CAST(NULL AS VARCHAR) AS "Roba",
+                CAST(NULL AS VARCHAR) AS "Reon",
+                CAST(NULL AS INT)     AS "tara",
+                CAST(NULL AS INT)     AS "NetoTone",
+                CAST(NULL AS VARCHAR) AS "Broj vagona",
+                CAST(NULL AS VARCHAR) AS "Broj kola",
+                CAST(NULL AS VARCHAR) AS "source_file",
+                CAST(NULL AS TIMESTAMP) AS "DatumVreme",
+                CAST(NULL AS VARCHAR) AS "broj_kola_bez_rezima_i_kb"
+            WHERE FALSE
+        """)
 
     try:
-        return con.execute(sql).fetchdf()
-    finally:
-        con.close()
-
-        # Proveri da postoje tabele pre kreiranja view-a
-        def table_exists(db_alias: str, tbl: str) -> bool:
-            q = f"""
-                SELECT COUNT(*) AS n
-                FROM {db_alias}.information_schema.tables
-                WHERE table_name = '{tbl}'
-            """
-            return con.execute(q).fetchone()[0] > 0
-
-        has_main_kola = table_exists("main", "kola")
-        has_upd_kola = has_upd and table_exists("upd", "kola_update")
-
-        if has_main_kola and has_upd_kola:
-            con.execute("""
-                CREATE OR REPLACE VIEW kola_view AS
-                SELECT * FROM main.kola
-                UNION ALL
-                SELECT * FROM upd.kola_update
-            """)
-        elif has_main_kola:
-            con.execute("""CREATE OR REPLACE VIEW kola_view AS SELECT * FROM main.kola""")
-        else:
-            # Ako ni main.kola ne postoji, napravi prazan view sa očekivanim kolonama
-            con.execute("""
-                CREATE OR REPLACE VIEW kola_view AS
-                SELECT 
-                    CAST(NULL AS VARCHAR) AS "Režim",
-                    CAST(NULL AS VARCHAR) AS "Vlasnik",
-                    CAST(NULL AS VARCHAR) AS "Serija",
-                    CAST(NULL AS INT)     AS "Inv br",
-                    CAST(NULL AS VARCHAR) AS "KB",
-                    CAST(NULL AS VARCHAR) AS "Tip kola",
-                    CAST(NULL AS VARCHAR) AS "Voz br",
-                    CAST(NULL AS VARCHAR) AS "Stanica",
-                    CAST(NULL AS VARCHAR) AS "Status",
-                    CAST(NULL AS VARCHAR) AS "Datum",
-                    CAST(NULL AS VARCHAR) AS "Vreme",
-                    CAST(NULL AS VARCHAR) AS "Roba",
-                    CAST(NULL AS VARCHAR) AS "Reon",
-                    CAST(NULL AS INT)     AS "tara",
-                    CAST(NULL AS INT)     AS "NetoTone",
-                    CAST(NULL AS VARCHAR) AS "Broj vagona",
-                    CAST(NULL AS VARCHAR) AS "Broj kola",
-                    CAST(NULL AS VARCHAR) AS "source_file",
-                    CAST(NULL AS TIMESTAMP) AS "DatumVreme",
-                    CAST(NULL AS VARCHAR) AS "broj_kola_bez_rezima_i_kb"
-                WHERE FALSE
-            """)
-
         return con.execute(sql).fetchdf()
     finally:
         con.close()
