@@ -1,1 +1,1 @@
-Teretna kola
+Teretna kola 1
