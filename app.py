@@ -1,44 +1,49 @@
 import os
-import time
-import io
-import glob
-import requests
+import re
 import duckdb
 import pandas as pd
-import gdown
 import streamlit as st
-# --- ID tvoje baze sa Google Drive-a ---
-FILE_ID = "1SbaxHotQ0BlNxts5f7tawLIQoWNu-hCG"
+
+# =========================
+#  Spajanje delova u kola_sk.db
+# =========================
 DB_PATH = "kola_sk.db"
 
-# --- URL za gdown ---
-URL = f"https://drive.google.com/uc?id={FILE_ID}"
-
-# --- Preuzimanje baze ako ne postoji ---
 if not os.path.exists(DB_PATH):
-    with st.spinner("⬇ Preuzimam glavnu bazu sa Google Drive-a..."):
-        try:
-            gdown.download(URL, DB_PATH, quiet=False, fuzzy=True)
-            st.success("✅ Glavna baza uspešno preuzeta!")
-        except Exception as e:
-            st.error(f"❌ Greška pri preuzimanju baze: {e}")
+    st.info("🔄 Spajam .part fajlove u jednu bazu...")
+    part_files = sorted(
+        [f for f in os.listdir(".") if re.match(r"kola_sk\.db\.part\d+", f)]
+    )
+    if part_files:
+        with open(DB_PATH, "wb") as outfile:
+            for fname in part_files:
+                with open(fname, "rb") as infile:
+                    outfile.write(infile.read())
+        st.success(f"✅ Spojeno {len(part_files)} delova → {DB_PATH}")
+    else:
+        st.error("❌ Nema pronađenih .part fajlova! Proveri da li si ih uploadovao u repo.")
 
-# ---------- Provera tipa baze ----------
-st.write("📂 Veličina fajla:", os.path.getsize(DB_PATH), "bajta")
+# =========================
+#  Provera tipa baze
+# =========================
+if os.path.exists(DB_PATH):
+    st.write("📂 Veličina fajla:", os.path.getsize(DB_PATH), "bajta")
 
-with open(DB_PATH, "rb") as f:
-    header = f.read(100)
+    with open(DB_PATH, "rb") as f:
+        header = f.read(100)
 
-st.write("🔍 Prvih 100 bajtova:", header)
+    st.write("🔍 Prvih 100 bajtova:", header)
 
-if b"DuckDB" in header:
-    st.success("✅ Ovo je DuckDB baza.")
-elif b"SQLite format 3" in header:
-    st.warning("⚠️ Ovo je SQLite baza, a ne DuckDB.")
-else:
-    st.error("❌ Fajl nije prepoznat kao DuckDB ili SQLite baza.")
+    if b"DuckDB" in header:
+        st.success("✅ Ovo je DuckDB baza.")
+    elif b"SQLite format 3" in header:
+        st.warning("⚠️ Ovo je SQLite baza, a ne DuckDB.")
+    else:
+        st.error("❌ Fajl nije prepoznat kao DuckDB ili SQLite baza.")
 
-# ---------- Test konekcija ----------
+# =========================
+#  Test konekcija
+# =========================
 try:
     con = duckdb.connect(DB_PATH, read_only=True)
     broj_tabela = con.execute("SHOW TABLES").fetchall()
@@ -48,7 +53,6 @@ except Exception as e:
 
 # Aktivna putanja do baze
 db_path = os.path.abspath(DB_PATH)
-
 # =========================
 #  Helper funkcije
 # =========================
