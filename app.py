@@ -47,14 +47,30 @@ if os.path.exists(DB_PATH):
         st.error("❌ Fajl nije prepoznat kao DuckDB ili SQLite baza.")
 
 def run_sql(db_path: str, sql: str) -> pd.DataFrame:
+    con = duckdb.connect(db_path, read_only=True)
     try:
-        con = duckdb.connect(db_path, read_only=True)
         df = con.execute(sql).fetchdf()
+    finally:
         con.close()
-        return df
-    except Exception as e:
-        st.error(f"Ne mogu da izvršim SQL: {e}")
-        return pd.DataFrame()
+    return df
+
+def table_exists(schema: str, table: str) -> bool:
+    con = duckdb.connect(db_path, read_only=True)
+    try:
+        result = con.execute(
+            f"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='{schema}' AND table_name='{table}'"
+        ).fetchone()[0]
+    finally:
+        con.close()
+    return result > 0
+
+# =========================
+#  Primeri provera
+# =========================
+st.write("📊 Dostupne tabele:", run_sql(db_path, "SHOW TABLES"))
+
+has_glavna_kola = table_exists("glavna", "kola")
+st.write("✅ Postoji li tabela 'glavna.kola':", has_glavna_kola)
 
 # =========================
 #  Test rada baze
