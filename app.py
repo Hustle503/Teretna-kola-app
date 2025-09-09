@@ -12,7 +12,7 @@ DB_PATH = "kola_sk.db"
 if not os.path.exists(DB_PATH):
     st.info("🔄 Spajam 48 .part fajlova u jednu bazu...")
 
-    # Pronađi sve delove u trenutnom folderu
+    # Pronađi svih 48 delova u trenutnom folderu
     part_files = sorted(
         [f for f in os.listdir(".") if re.match(r"kola_sk\.db\.part\d+", f)],
         key=lambda x: int(re.search(r"part(\d+)", x).group(1))
@@ -46,6 +46,9 @@ if os.path.exists(DB_PATH):
     else:
         st.error("❌ Fajl nije prepoznat kao DuckDB ili SQLite baza.")
 
+# =========================
+#  Funkcije za rad sa bazom
+# =========================
 def run_sql(db_path: str, sql: str) -> pd.DataFrame:
     con = duckdb.connect(db_path, read_only=True)
     try:
@@ -55,7 +58,7 @@ def run_sql(db_path: str, sql: str) -> pd.DataFrame:
     return df
 
 def table_exists(schema: str, table: str) -> bool:
-    con = duckdb.connect(db_path, read_only=True)
+    con = duckdb.connect(DB_PATH, read_only=True)
     try:
         result = con.execute(
             f"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='{schema}' AND table_name='{table}'"
@@ -65,101 +68,26 @@ def table_exists(schema: str, table: str) -> bool:
     return result > 0
 
 # =========================
-#  Primeri provera
-# =========================
-st.write("📊 Dostupne tabele:", run_sql(db_path, "SHOW TABLES"))
-
-has_glavna_kola = table_exists("glavna", "kola")
-st.write("✅ Postoji li tabela 'glavna.kola':", has_glavna_kola)
-
-# =========================
 #  Test rada baze
 # =========================
-if os.path.exists(db_path):
-    st.success(f"✅ Baza {db_path} je pronađena")
-
-    # probaj prvo da čita iz kola_view ako postoji
-    try:
-        df_test = run_sql(db_path, "SELECT COUNT(*) AS broj_redova FROM kola_view")
-        if not df_test.empty:
-            st.write("📊 Broj redova u `kola_view`:", df_test.iloc[0,0])
-    except Exception:
-        # fallback na tabelu kola
-        df_test = run_sql(db_path, "SELECT COUNT(*) AS broj_redova FROM kola")
-        if not df_test.empty:
-            st.write("📊 Broj redova u `kola`:", df_test.iloc[0,0])
-else:
-    st.error(f"❌ Baza {db_path} nije pronađena")
-
-# ======================================
-#   Test rada baze
-# ======================================
-DB_PATH = "kola_sk.db"
-
 if os.path.exists(DB_PATH):
     st.success(f"✅ Baza {DB_PATH} je pronađena")
 
-    # probni upit
-    test_sql = "SELECT COUNT(*) AS broj_redova FROM kola"
-    df_test = run_sql(DB_PATH, test_sql)
+    # prikaži dostupne tabele
+    st.write("📊 Dostupne tabele:", run_sql(DB_PATH, "SHOW TABLES"))
 
-    if not df_test.empty:
-        st.write("📊 Broj redova u tabeli `kola`:", df_test.iloc[0,0])
+    # probaj prvo da čita iz kola_view ako postoji
+    try:
+        df_test = run_sql(DB_PATH, "SELECT COUNT(*) AS broj_redova FROM kola_view")
+        if not df_test.empty:
+            st.write("📊 Broj redova u `kola_view`:", df_test.iloc[0, 0])
+    except Exception:
+        # fallback na tabelu kola
+        df_test = run_sql(DB_PATH, "SELECT COUNT(*) AS broj_redova FROM kola")
+        if not df_test.empty:
+            st.write("📊 Broj redova u `kola`:", df_test.iloc[0, 0])
 else:
     st.error(f"❌ Baza {DB_PATH} nije pronađena")
-        has_glavna_kola = table_exists("glavna", "kola")
-        has_upd_kola = has_upd and table_exists("upd", "kola_update")
-
-        if has_glavna_kola and has_upd_kola:
-            con.execute("""
-                CREATE OR REPLACE VIEW kola_view AS
-                SELECT * FROM glavna.kola
-                UNION ALL
-                SELECT * FROM upd.kola_update
-            """)
-        elif has_glavna_kola:
-            con.execute("""CREATE OR REPLACE VIEW kola_view AS SELECT * FROM glavna.kola""")
-        else:
-            # Ako ni glavna.kola ne postoji, napravi prazan view sa očekivanim kolonama
-            con.execute("""
-                CREATE OR REPLACE VIEW kola_view AS
-                SELECT 
-                    CAST(NULL AS VARCHAR) AS "Režim",
-                    CAST(NULL AS VARCHAR) AS "Vlasnik",
-                    CAST(NULL AS VARCHAR) AS "Serija",
-                    CAST(NULL AS INT)     AS "Inv br",
-                    CAST(NULL AS VARCHAR) AS "KB",
-                    CAST(NULL AS VARCHAR) AS "Tip kola",
-                    CAST(NULL AS VARCHAR) AS "Voz br",
-                    CAST(NULL AS VARCHAR) AS "Stanica",
-                    CAST(NULL AS VARCHAR) AS "Status",
-                    CAST(NULL AS VARCHAR) AS "Datum",
-                    CAST(NULL AS VARCHAR) AS "Vreme",
-                    CAST(NULL AS VARCHAR) AS "Roba",
-                    CAST(NULL AS VARCHAR) AS "Reon",
-                    CAST(NULL AS INT)     AS "tara",
-                    CAST(NULL AS INT)     AS "NetoTone",
-                    CAST(NULL AS VARCHAR) AS "Broj vagona",
-                    CAST(NULL AS VARCHAR) AS "Broj kola",
-                    CAST(NULL AS VARCHAR) AS "source_file",
-                    CAST(NULL AS TIMESTAMP) AS "DatumVreme",
-                    CAST(NULL AS VARCHAR) AS "broj_kola_bez_rezima_i_kb"
-                WHERE FALSE
-            """)
-
-        return con.execute(sql).fetchdf()
-    finally:
-        con.close()
-
-def create_or_replace_table_from_df(db_file: str, table_name: str, df: pd.DataFrame):
-    con = duckdb.connect(db_file)
-    try:
-        con.register("df_tmp", df)
-        con.execute(f'CREATE OR REPLACE TABLE "{table_name}" AS SELECT * FROM df_tmp')
-        con.unregister("df_tmp")
-    finally:
-        con.close()
-
 # =========================
 #  SIDEBAR
 # =========================
