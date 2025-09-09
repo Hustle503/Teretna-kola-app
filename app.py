@@ -6,25 +6,42 @@ import duckdb
 import pandas as pd
 import streamlit as st
 import gdown
+from pydrive2.auth import GoogleAuth
+from pydrive2.drive import GoogleDrive
 
 # =========================
-# Konstante
+# Spajanje delova u kola_sk.db
 # =========================
 DB_PATH = "kola_sk.db"
 FOLDER_ID = "1q__8P3gY-JMzqD5cpt8avm_7VAY-fHWI"
 
-# =========================
-# Preuzimanje fajlova sa Google Drive
-# =========================
+def download_with_pydrive2(folder_id: str):
+    """Fallback metoda ako gdown ne uspe."""
+    gauth = GoogleAuth()
+    gauth.LocalWebserverAuth() if os.environ.get("STREAMLIT_RUNTIME") is None else gauth.CommandLineAuth()
+    drive = GoogleDrive(gauth)
+
+    file_list = drive.ListFile({'q': f"'{folder_id}' in parents and trashed=false"}).GetList()
+    st.write(f"📂 Pydrive2 našao {len(file_list)} fajlova u folderu")
+    for f in file_list:
+        fname = f["title"]
+        st.write(f"⬇️ Preuzimam {fname}...")
+        f.GetContentFile(fname)
+
 if not os.path.exists(DB_PATH):
     st.info("☁️ Preuzimam delove baze sa Google Drive...")
 
     try:
-        gdown.download_folder(id="1q__8P3gY-JMzqD5cpt8avm_7VAY-fHWI", quiet=False, use_cookies=False)
+        # Prvo pokušaj sa gdown
+        gdown.download_folder(id=FOLDER_ID, quiet=False, use_cookies=False)
     except Exception as e:
-        st.error(f"❌ Greška pri preuzimanju sa Google Drive: {e}")
+        st.warning(f"⚠️ gdown nije uspeo ({e}), prelazim na pydrive2...")
+        try:
+            download_with_pydrive2(FOLDER_ID)
+        except Exception as ee:
+            st.error(f"❌ Ni pydrive2 nije uspeo: {ee}")
 
-    # Spajanje .part fajlova
+    # Nakon preuzimanja spajamo fajlove
     part_files = sorted(
         [f for f in os.listdir(".") if re.match(r"kola_sk\.db\.part\d+", f)],
         key=lambda x: int(re.search(r"part(\d+)", x).group(1))
@@ -38,8 +55,7 @@ if not os.path.exists(DB_PATH):
                     outfile.write(infile.read())
         st.success(f"✅ Spojeno {len(part_files)} delova → {DB_PATH}")
     else:
-        st.error(f"❌ Nađeno samo {len(part_files)} fajlova, a treba 48.")
-
+        st.error(f"❌ Nije pronađeno svih 48 fajlova (.part1 … .part48). Nađeno: {len(part_files)}")
 # =========================
 # Provera i inicijalizacija baze
 # =========================
