@@ -61,7 +61,6 @@ db_path = os.path.abspath(DB_PATH)
 # =========================
 #  Helper funkcije
 # =========================
- ======================================
 #   Funkcija za izvršavanje SQL upita
 # ======================================
 def run_sql(db_path: str, sql: str) -> pd.DataFrame:
