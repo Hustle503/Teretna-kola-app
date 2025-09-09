@@ -61,6 +61,9 @@ db_path = os.path.abspath(DB_PATH)
 # =========================
 #  Helper funkcije
 # =========================
+ ======================================
+#   Funkcija za izvršavanje SQL upita
+# ======================================
 def run_sql(db_path: str, sql: str) -> pd.DataFrame:
     try:
         con = duckdb.connect(db_path, read_only=True)
@@ -70,15 +73,23 @@ def run_sql(db_path: str, sql: str) -> pd.DataFrame:
     except Exception as e:
         st.error(f"Ne mogu da izvršim SQL: {e}")
         return pd.DataFrame()
-        # Proveri da postoje tabele pre kreiranja view-a
-        def table_exists(db_alias: str, tbl: str) -> bool:
-            q = f"""
-                SELECT COUNT(*) AS n
-                FROM {db_alias}.information_schema.tables
-                WHERE table_name = '{tbl}'
-            """
-            return con.execute(q).fetchone()[0] > 0
 
+# ======================================
+#   Test rada baze
+# ======================================
+DB_PATH = "kola_sk.db"
+
+if os.path.exists(DB_PATH):
+    st.success(f"✅ Baza {DB_PATH} je pronađena")
+
+    # probni upit
+    test_sql = "SELECT COUNT(*) AS broj_redova FROM kola"
+    df_test = run_sql(DB_PATH, test_sql)
+
+    if not df_test.empty:
+        st.write("📊 Broj redova u tabeli `kola`:", df_test.iloc[0,0])
+else:
+    st.error(f"❌ Baza {DB_PATH} nije pronađena")
         has_glavna_kola = table_exists("glavna", "kola")
         has_upd_kola = has_upd and table_exists("upd", "kola_update")
 
