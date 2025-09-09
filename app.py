@@ -1,5 +1,7 @@
-iimport os
+import os
 import re
+import io
+import time
 import duckdb
 import pandas as pd
 import streamlit as st
@@ -11,89 +13,74 @@ DB_PATH = "kola_sk.db"
 
 if not os.path.exists(DB_PATH):
     st.info("🔄 Spajam 48 .part fajlova u jednu bazu...")
-
-    # Pronađi sve delove u trenutnom folderu
     part_files = sorted(
-        [f for f in os.listdir(".") if re.match(r"kola_sk\.db\.part\d+", f)],
-        key=lambda x: int(re.search(r"part(\d+)", x).group(1))
+        [f for f in os.listdir(".") if re.match(r"kola_sk\.db\.part\d+$", f)],
+        key=lambda x: int(re.search(r"part(\d+)$", x).group(1))
     )
-
-    if part_files and len(part_files) == 48:
-        with open(DB_PATH, "wb") as outfile:
+    if len(part_files) == 48:
+        with open(DB_PATH, "wb") as out:
             for fname in part_files:
                 st.write(f"➡️ Dodajem {fname}")
-                with open(fname, "rb") as infile:
-                    outfile.write(infile.read())
+                with open(fname, "rb") as src:
+                    out.write(src.read())
         st.success(f"✅ Spojeno {len(part_files)} delova → {DB_PATH}")
     else:
-        st.error(f"❌ Nije pronađeno svih 48 fajlova (.part1 … .part48). Nađeno: {len(part_files)}")
+        st.error(f"❌ Nađeno {len(part_files)} delova, a očekujem 48 (.part1 … .part48).")
+        st.stop()
 
 # =========================
-#  Provera i inicijalizacija baze
+#  Inicijalizacija baze (bez header provere)
 # =========================
-if os.path.exists(DB_PATH):
-    st.success(f"✅ Baza {DB_PATH} je pronađena")
-    st.write("📂 Veličina fajla:", os.path.getsize(DB_PATH), "bajta")
-
-    try:
-        con = duckdb.connect(DB_PATH)
-        # kreiraj view ako ne postoji
-        con.execute("""
-            CREATE OR REPLACE VIEW kola_view AS
-            SELECT * FROM kola
-        """)
-        con.close()
-        st.success("✅ 'kola_view' je spreman za upotrebu")
-    except Exception as e:
-        st.error(f"❌ Problem sa bazom: {e}")
-else:
+if not os.path.exists(DB_PATH):
     st.error(f"❌ Baza {DB_PATH} nije pronađena")
-   
-#  Funkcije za rad sa bazom
-# =========================
-def run_sql(DB_PATH: str, sql: str) -> pd.DataFrame:
-    con = duckdb.connect(DB_PATH, read_only=True)
-    try:
-        df = con.execute(sql).fetchdf()
-    finally:
-        con.close()
-    return df
+    st.stop()
 
-def table_exists(schema: str, table: str) -> bool:
-    con = duckdb.connect(DB_PATH, read_only=True)
-    try:
-        result = con.execute(
-            f"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='{schema}' AND table_name='{table}'"
-        ).fetchone()[0]
-    finally:
-        con.close()
-    return result > 0
-    
-def create_or_replace_table_from_df(db_path: str, table_name: str, df: pd.DataFrame):
-    """Kreira ili menja tabelu iz DataFrame-a u DuckDB bazi."""
+st.success(f"✅ Baza {DB_PATH} je pronađena (📂 {os.path.getsize(DB_PATH)} bajta)")
+
+# Uvek koristimo ISTU konfiguraciju konekcije (bez read_only)
+def run_sql(db_path: str, sql: str) -> pd.DataFrame:
     con = duckdb.connect(db_path)
     try:
-        con.execute(f"DROP TABLE IF EXISTS {table_name}")
-        con.register("temp_df", df)
-        con.execute(f"CREATE TABLE {table_name} AS SELECT * FROM temp_df")
+        return con.execute(sql).fetchdf()
     finally:
         con.close()
-# =========================
-#  Test rada baze
-# =========================
-if os.path.exists(DB_PATH):
-    st.success(f"✅ Baza {DB_PATH} je pronađena")
 
-    # probaj prvo da čita iz kola_view ako postoji
+def exec_sql(db_path: str, sql: str) -> None:
+    con = duckdb.connect(db_path)
     try:
-        df_test = run_sql(DB_PATH, "SELECT COUNT(*) AS broj_redova FROM kola_view")
-        if not df_test.empty:
-            st.write("📊 Broj redova u `kola_view`:", df_test.iloc[0,0])
-    except Exception:
-        # fallback na tabelu kola
-        df_test = run_sql(DB_PATH, "SELECT COUNT(*) AS broj_redova FROM kola")
-        if not df_test.empty:
-            st.write("📊 Broj redova u `kola`:", df_test.iloc[0,0])
+        con.execute(sql)
+    finally:
+        con.close()
+
+def create_or_replace_table_from_df(db_path: str, table_name: str, df: pd.DataFrame):
+    con = duckdb.connect(db_path)
+    try:
+        con.execute(f'DROP TABLE IF EXISTS "{table_name}"')
+        con.register("temp_df", df)
+        con.execute(f'CREATE TABLE "{table_name}" AS SELECT * FROM temp_df')
+        con.unregister("temp_df")
+    finally:
+        con.close()
+
+# Napravi pogled kola_view -> kola (ako nije već tu)
+try:
+    exec_sql(DB_PATH, """
+        CREATE OR REPLACE VIEW kola_view AS
+        SELECT * FROM kola
+    """)
+    st.success("✅ 'kola_view' je spreman")
+except Exception as e:
+    st.warning(f"⚠️ Ne mogu da kreiram 'kola_view' (nastavljam bez): {e}")
+
+# Brzi test rada
+try:
+    # probaj preko kola_view
+    df_test = run_sql(DB_PATH, "SELECT COUNT(*) AS n FROM kola_view")
+    st.write("📊 Broj redova u `kola_view`:", int(df_test.iloc[0, 0]))
+except Exception:
+    # fallback na kola
+    df_test = run_sql(DB_PATH, "SELECT COUNT(*) AS n FROM kola")
+    st.write("📊 Broj redova u `kola`:", int(df_test.iloc[0, 0]))
 else:
     st.error(f"❌ Baza {DB_PATH} nije pronađena")
 # =========================
