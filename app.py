@@ -1,7 +1,6 @@
 import os
 import re
 import duckdb
-import pandas as pd
 import streamlit as st
 
 # =========================
@@ -10,18 +9,23 @@ import streamlit as st
 DB_PATH = "kola_sk.db"
 
 if not os.path.exists(DB_PATH):
-    st.info("🔄 Spajam .part fajlove u jednu bazu...")
+    st.info("🔄 Spajam 48 .part fajlova u jednu bazu...")
+
+    # Pronađi sve delove u trenutnom folderu
     part_files = sorted(
-        [f for f in os.listdir(".") if re.match(r"kola_sk\.db\.part\d+", f)]
+        [f for f in os.listdir(".") if re.match(r"kola_sk\.db\.part\d+", f)],
+        key=lambda x: int(re.search(r"part(\d+)", x).group(1))
     )
-    if part_files:
+
+    if part_files and len(part_files) == 48:
         with open(DB_PATH, "wb") as outfile:
             for fname in part_files:
+                st.write(f"➡️ Dodajem {fname}")
                 with open(fname, "rb") as infile:
                     outfile.write(infile.read())
         st.success(f"✅ Spojeno {len(part_files)} delova → {DB_PATH}")
     else:
-        st.error("❌ Nema pronađenih .part fajlova! Proveri da li si ih uploadovao u repo.")
+        st.error(f"❌ Nije pronađeno svih 48 fajlova (.part1 … .part48). Nađeno: {len(part_files)}")
 
 # =========================
 #  Provera tipa baze
@@ -37,7 +41,7 @@ if os.path.exists(DB_PATH):
     if b"DuckDB" in header:
         st.success("✅ Ovo je DuckDB baza.")
     elif b"SQLite format 3" in header:
-        st.warning("⚠️ Ovo je SQLite baza, a ne DuckDB.")
+        st.warning("⚠ Ovo je SQLite baza, a ne DuckDB.")
     else:
         st.error("❌ Fajl nije prepoznat kao DuckDB ili SQLite baza.")
 
