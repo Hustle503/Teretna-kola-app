@@ -13,6 +13,7 @@ DB_PATH = "kola_sk.db"
 if not os.path.exists(DB_PATH):
     st.info("⬇️ Preuzimam sve .part fajlove sa Google Drive foldera...")
     # preuzima sve fajlove iz foldera
-    gdown.download_folder(URL=FOLDER_URL, quiet=False, use_cookies=False)
+    gdown.download_folder(id="1q__8P3gY-JMzqD5cpt8avm_7VAY-fHWI", quiet=False, use_cookies=False)
+
 
     st.success("✅ Svi delovi preuzeti! Mogao bi sada da se spoje.")
