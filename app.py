@@ -46,6 +46,17 @@ if os.path.exists(DB_PATH):
     else:
         st.error("❌ Fajl nije prepoznat kao DuckDB ili SQLite baza.")
 
+    # ✅ Automatsko kreiranje kola_view
+    try:
+        con = duckdb.connect(DB_PATH)
+        con.execute("""
+            CREATE OR REPLACE VIEW kola_view AS
+            SELECT * FROM kola
+        """)
+        con.close()
+        st.success("✅ Kreiran pogled 'kola_view' → SELECT * FROM kola")
+    except Exception as e:
+        st.error(f"❌ Ne mogu da napravim kola_view: {e}")
 # =========================
 #  Funkcije za rad sa bazom
 # =========================
