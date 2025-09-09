@@ -81,8 +81,6 @@ except Exception:
     # fallback na kola
     df_test = run_sql(DB_PATH, "SELECT COUNT(*) AS n FROM kola")
     st.write("📊 Broj redova u `kola`:", int(df_test.iloc[0, 0]))
-else:
-    st.error(f"❌ Baza {DB_PATH} nije pronađena")
 # =========================
 #  SIDEBAR
 # =========================
