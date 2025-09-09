@@ -1,4 +1,4 @@
-import os
+iimport os
 import re
 import duckdb
 import pandas as pd
@@ -12,7 +12,7 @@ DB_PATH = "kola_sk.db"
 if not os.path.exists(DB_PATH):
     st.info("🔄 Spajam 48 .part fajlova u jednu bazu...")
 
-    # Pronađi svih 48 delova u trenutnom folderu
+    # Pronađi sve delove u trenutnom folderu
     part_files = sorted(
         [f for f in os.listdir(".") if re.match(r"kola_sk\.db\.part\d+", f)],
         key=lambda x: int(re.search(r"part(\d+)", x).group(1))
@@ -29,7 +29,7 @@ if not os.path.exists(DB_PATH):
         st.error(f"❌ Nije pronađeno svih 48 fajlova (.part1 … .part48). Nađeno: {len(part_files)}")
 
 # =========================
-#  Provera tipa baze
+#  Provera i inicijalizacija baze
 # =========================
 if os.path.exists(DB_PATH):
     st.success(f"✅ Baza {DB_PATH} je pronađena")
@@ -37,7 +37,7 @@ if os.path.exists(DB_PATH):
 
     try:
         con = duckdb.connect(DB_PATH)
-        # kreiraj view ako ga nema
+        # kreiraj view ako ne postoji
         con.execute("""
             CREATE OR REPLACE VIEW kola_view AS
             SELECT * FROM kola
@@ -48,18 +48,7 @@ if os.path.exists(DB_PATH):
         st.error(f"❌ Problem sa bazom: {e}")
 else:
     st.error(f"❌ Baza {DB_PATH} nije pronađena")
-    # ✅ Automatsko kreiranje kola_view
-    try:
-        con = duckdb.connect(DB_PATH)
-        con.execute("""
-            CREATE OR REPLACE VIEW kola_view AS
-            SELECT * FROM kola
-        """)
-        con.close()
-        st.success("✅ Kreiran pogled 'kola_view' → SELECT * FROM kola")
-    except Exception as e:
-        st.error(f"❌ Ne mogu da napravim kola_view: {e}")
-# =========================
+   
 #  Funkcije za rad sa bazom
 # =========================
 def run_sql(DB_PATH: str, sql: str) -> pd.DataFrame:
