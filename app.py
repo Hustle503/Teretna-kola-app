@@ -46,23 +46,6 @@ if os.path.exists(DB_PATH):
     else:
         st.error("❌ Fajl nije prepoznat kao DuckDB ili SQLite baza.")
 
-# =========================
-#  Test konekcija
-# =========================
-try:
-    con = duckdb.connect(DB_PATH, read_only=True)
-    broj_tabela = con.execute("SHOW TABLES").fetchall()
-    st.write("📊 Tabele u bazi:", broj_tabela)
-except Exception as e:
-    st.error(f"Ne mogu da pročitam bazu: {e}")
-
-# Aktivna putanja do baze
-db_path = os.path.abspath(DB_PATH)
-# =========================
-#  Helper funkcije
-# =========================
-#   Funkcija za izvršavanje SQL upita
-# ======================================
 def run_sql(db_path: str, sql: str) -> pd.DataFrame:
     try:
         con = duckdb.connect(db_path, read_only=True)
@@ -72,6 +55,25 @@ def run_sql(db_path: str, sql: str) -> pd.DataFrame:
     except Exception as e:
         st.error(f"Ne mogu da izvršim SQL: {e}")
         return pd.DataFrame()
+
+# =========================
+#  Test rada baze
+# =========================
+if os.path.exists(db_path):
+    st.success(f"✅ Baza {db_path} je pronađena")
+
+    # probaj prvo da čita iz kola_view ako postoji
+    try:
+        df_test = run_sql(db_path, "SELECT COUNT(*) AS broj_redova FROM kola_view")
+        if not df_test.empty:
+            st.write("📊 Broj redova u `kola_view`:", df_test.iloc[0,0])
+    except Exception:
+        # fallback na tabelu kola
+        df_test = run_sql(db_path, "SELECT COUNT(*) AS broj_redova FROM kola")
+        if not df_test.empty:
+            st.write("📊 Broj redova u `kola`:", df_test.iloc[0,0])
+else:
+    st.error(f"❌ Baza {db_path} nije pronađena")
 
 # ======================================
 #   Test rada baze
