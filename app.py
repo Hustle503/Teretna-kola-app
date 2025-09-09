@@ -68,7 +68,16 @@ def table_exists(schema: str, table: str) -> bool:
     finally:
         con.close()
     return result > 0
-
+    
+def create_or_replace_table_from_df(db_path: str, table_name: str, df: pd.DataFrame):
+    """Kreira ili menja tabelu iz DataFrame-a u DuckDB bazi."""
+    con = duckdb.connect(db_path)
+    try:
+        con.execute(f"DROP TABLE IF EXISTS {table_name}")
+        con.register("temp_df", df)
+        con.execute(f"CREATE TABLE {table_name} AS SELECT * FROM temp_df")
+    finally:
+        con.close()
 # =========================
 #  Test rada baze
 # =========================
@@ -101,7 +110,7 @@ if uploaded_excel_stanje is not None:
     if st.sidebar.button("📥 Učitaj u bazu kao 'stanje'"):
         try:
             df_stanje = pd.read_excel(uploaded_excel_stanje)
-            create_or_replace_table_from_df(MAIN_DB, "stanje", df_stanje)
+            create_or_replace_table_from_df(DB_PATH, "stanje", df_stanje)
             st.sidebar.success(f"✅ 'stanje' učitano ({len(df_stanje)} redova).")
         except Exception as e:
             st.sidebar.error(f"❌ Greška pri uvozu 'stanje': {e}")
@@ -112,7 +121,7 @@ if uploaded_excel_stanice is not None:
     if st.sidebar.button("📥 Učitaj u bazu kao 'stanice'"):
         try:
             df_st = pd.read_excel(uploaded_excel_stanice)
-            create_or_replace_table_from_df(MAIN_DB, "stanice", df_st)
+            create_or_replace_table_from_df(DB_PATH, "stanice", df_st)
             st.sidebar.success(f"✅ 'stanice' učitano ({len(df_st)} redova).")
         except Exception as e:
             st.sidebar.error(f"❌ Greška pri uvozu 'stanice': {e}")
