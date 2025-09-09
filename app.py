@@ -5,7 +5,9 @@ import time
 import duckdb
 import pandas as pd
 import streamlit as st
+st.set_page_config(page_title="🚃 Teretna kola SK", layout="wide")
 
+st.write("✅ App se pokreće do ove tačke")
 # =========================
 #  Spajanje delova u kola_sk.db
 # =========================
