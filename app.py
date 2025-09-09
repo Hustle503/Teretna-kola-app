@@ -32,20 +32,22 @@ if not os.path.exists(DB_PATH):
 #  Provera tipa baze
 # =========================
 if os.path.exists(DB_PATH):
+    st.success(f"✅ Baza {DB_PATH} je pronađena")
     st.write("📂 Veličina fajla:", os.path.getsize(DB_PATH), "bajta")
 
-    with open(DB_PATH, "rb") as f:
-        header = f.read(100)
-
-    st.write("🔍 Prvih 100 bajtova:", header)
-
-    if b"DuckDB" in header:
-        st.success("✅ Ovo je DuckDB baza.")
-    elif b"SQLite format 3" in header:
-        st.warning("⚠ Ovo je SQLite baza, a ne DuckDB.")
-    else:
-        st.error("❌ Fajl nije prepoznat kao DuckDB ili SQLite baza.")
-
+    try:
+        con = duckdb.connect(DB_PATH)
+        # kreiraj view ako ga nema
+        con.execute("""
+            CREATE OR REPLACE VIEW kola_view AS
+            SELECT * FROM kola
+        """)
+        con.close()
+        st.success("✅ 'kola_view' je spreman za upotrebu")
+    except Exception as e:
+        st.error(f"❌ Problem sa bazom: {e}")
+else:
+    st.error(f"❌ Baza {DB_PATH} nije pronađena")
     # ✅ Automatsko kreiranje kola_view
     try:
         con = duckdb.connect(DB_PATH)
