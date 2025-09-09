@@ -138,13 +138,13 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
 with tab1:
     col_a, col_b, col_c, col_d = st.columns(4)
     try:
-        df_cnt = run_sql(db_path, "SELECT COUNT(*) AS broj_redova FROM kola_view")
+        df_cnt = run_sql(DB_PATH, "SELECT COUNT(*) AS broj_redova FROM kola_view")
         col_a.metric("Ukupan broj redova", f"{int(df_cnt['broj_redova'][0]):,}".replace(",", "."))
 
-        df_files = run_sql(db_path, "SELECT COUNT(DISTINCT source_file) AS fajlova FROM kola_view")
+        df_files = run_sql(DB_PATH, "SELECT COUNT(DISTINCT source_file) AS fajlova FROM kola_view")
         col_b.metric("Učitanih fajlova", int(df_files["fajlova"][0]))
 
-        df_range = run_sql(db_path, """
+        df_range = run_sql(DB_PATH, """
             SELECT MIN(DatumVreme) AS min_dt, MAX(DatumVreme) AS max_dt
             FROM kola_view WHERE DatumVreme IS NOT NULL
         """)
@@ -155,7 +155,7 @@ with tab1:
 
         st.divider()
         st.subheader("Učitanih redova po fajlu (top 20)")
-        df_by_file = run_sql(db_path, """
+        df_by_file = run_sql(DB_PATH, """
             SELECT source_file, COUNT(*) AS broj
             FROM kola_view
             GROUP BY source_file
@@ -172,7 +172,7 @@ with tab1:
 # =========================
 with tab2:
     st.subheader("Suma NetoTone po mesecu")
-    df_month = run_sql(db_path, """
+    df_month = run_sql(DB_PATH, """
         SELECT date_trunc('month', DatumVreme) AS mesec,
                SUM(COALESCE("NetoTone", 0)) AS ukupno_tona
         FROM kola_view
@@ -184,7 +184,7 @@ with tab2:
         st.line_chart(df_month.set_index("mesec")["ukupno_tona"])
 
     st.subheader("Top 20 stanica po broju vagona")
-    df_sta = run_sql(db_path, """
+    df_sta = run_sql(DB_PATH, """
         SELECT "Stanica", COUNT(*) AS broj
         FROM kola_view
         GROUP BY "Stanica"
@@ -197,7 +197,7 @@ with tab2:
     c1, c2 = st.columns(2)
     with c1:
         st.subheader("Prosečna NetoTone po tipu kola")
-        df_tip = run_sql(db_path, """
+        df_tip = run_sql(DB_PATH, """
             SELECT "Tip kola" AS tip, AVG(COALESCE("NetoTone", 0)) AS prosek_tona
             FROM kola_view
             GROUP BY tip
@@ -207,7 +207,7 @@ with tab2:
         st.dataframe(df_tip, use_container_width=True)
     with c2:
         st.subheader("Prosečna tara po tipu kola")
-        df_tara = run_sql(db_path, """
+        df_tara = run_sql(DB_PATH, """
             SELECT "Tip kola" AS tip, AVG(COALESCE("tara", 0)) AS prosek_tare
             FROM kola_view
             GROUP BY tip
@@ -228,7 +228,7 @@ with tab3:
     if run_btn:
         t0 = time.time()
         try:
-            df_user = run_sql(db_path, user_sql)
+            df_user = run_sql(DB_PATH, user_sql)
             elapsed = time.time() - t0
             st.success(f"OK ({elapsed:.2f}s) — {len(df_user):,} redova".replace(",", "."))
             st.dataframe(df_user, use_container_width=True)
@@ -255,7 +255,7 @@ with tab4:
     )
     try:
         cols_sql = ", ".join([f'"{c}"' if c not in ("DatumVreme",) else c for c in cols])
-        df_preview = run_sql(db_path, f"SELECT {cols_sql} FROM kola_view LIMIT {int(limit)}")
+        df_preview = run_sql(DB_PATH, f"SELECT {cols_sql} FROM kola_view LIMIT {int(limit)}")
         st.dataframe(df_preview, use_container_width=True)
     except Exception as e:
         st.error(f"Greška pri čitanju: {e}")
@@ -282,7 +282,7 @@ with tab5:
                 )
                 SELECT * FROM poslednji WHERE rn = 1
             """
-            df_last = run_sql(db_path, q_last)
+            df_last = run_sql(DB_PATH, q_last)
             st.success(f"✅ Pronađeno {len(df_last)} poslednjih unosa.")
             st.dataframe(df_last, use_container_width=True)
         except Exception as e:
@@ -308,7 +308,7 @@ with tab6:
                   AND DatumVreme BETWEEN '{start_date}' AND '{end_date}'
                 ORDER BY DatumVreme DESC
             """
-            df_search = run_sql(db_path, q_search)
+            df_search = run_sql(DB_PATH, q_search)
             if df_search.empty:
                 st.warning("⚠️ Nema podataka za zadate kriterijume.")
             else:
@@ -342,7 +342,7 @@ with tab7:
         )
         SELECT * FROM poslednji WHERE rn = 1
         """
-        df_last = run_sql(db_path, q)
+        df_last = run_sql(DB_PATH, q)
 
         # Pivot po stanici (TIP 0/1)
         df_pivot = (
@@ -439,7 +439,7 @@ with tab8:
         WHERE rn = 1 OR rn IS NULL
         ORDER BY BrojDana ASC
         """
-        df_tip0 = run_sql(db_path, q)
+        df_tip0 = run_sql(DB_PATH, q)
 
         if "BrojDana" in df_tip0.columns:
             df_tip0["BrojDana"] = df_tip0["BrojDana"].astype("Int64")
@@ -512,7 +512,7 @@ with tab9:
         WHERE rn = 1 OR rn IS NULL
         ORDER BY BrojDana ASC
         """
-        df_tip1 = run_sql(db_path, q)
+        df_tip1 = run_sql(DB_PATH, q)
 
         if "BrojDana" in df_tip1.columns:
             df_tip1["BrojDana"] = df_tip1["BrojDana"].astype("Int64")
@@ -567,7 +567,7 @@ with tab10:
         )
         SELECT * FROM poslednji WHERE rn = 1
         """
-        df_last = run_sql(db_path, q)
+        df_last = run_sql(DB_PATH, q)
 
         df_pivot = (
             df_last.groupby(["Serija", "TIP"]).size().unstack(fill_value=0).reset_index()
