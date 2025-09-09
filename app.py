@@ -49,8 +49,8 @@ if os.path.exists(DB_PATH):
 # =========================
 #  Funkcije za rad sa bazom
 # =========================
-def run_sql(db_path: str, sql: str) -> pd.DataFrame:
-    con = duckdb.connect(db_path, read_only=True)
+def run_sql(DB_PATH: str, sql: str) -> pd.DataFrame:
+    con = duckdb.connect(DB_PATH, read_only=True)
     try:
         df = con.execute(sql).fetchdf()
     finally:
