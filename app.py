@@ -20,7 +20,7 @@ if not os.path.exists(DB_PATH):
     st.info("☁️ Preuzimam delove baze sa Google Drive...")
 
     try:
-        gdown.download_folder(id=FOLDER_ID, quiet=False, use_cookies=False)
+        gdown.download_folder(id="1q__8P3gY-JMzqD5cpt8avm_7VAY-fHWI", quiet=False, use_cookies=False)
     except Exception as e:
         st.error(f"❌ Greška pri preuzimanju sa Google Drive: {e}")
 
