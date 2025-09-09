@@ -1,6 +1,7 @@
 import os
 import re
 import duckdb
+import pandas as pd
 import streamlit as st
 
 # =========================
@@ -60,20 +61,15 @@ db_path = os.path.abspath(DB_PATH)
 # =========================
 #  Helper funkcije
 # =========================
-def run_sql(db_path: str, sql: str) -> pd.DataFrame:
-    """
-    Izvrši SQL nad 'kola_view':
-      - ATTACH main (obavezno) i opcioni upd (ako UPDATE_DB postoji)
-      - Kreira/Koristi view 'kola_view' koji pokazuje ili na UNION (main.kola UNION ALL upd.kola_update)
-        ili samo na main.kola (ako upd ne postoji).
-    """
-    con = duckdb.connect()
+ddef run_sql(db_path: str, sql: str) -> pd.DataFrame:
     try:
-        con.execute(f"ATTACH '{os.path.abspath(MAIN_DB)}' AS glavna")
-        has_upd = os.path.exists(UPDATE_DB)
-        if has_upd:
-            con.execute(f"ATTACH '{os.path.abspath(UPDATE_DB)}' AS upd")
-
+        con = duckdb.connect(db_path, read_only=True)
+        df = con.execute(sql).fetchdf()
+        con.close()
+        return df
+    except Exception as e:
+        st.error(f"Ne mogu da izvršim SQL: {e}")
+        return pd.DataFrame()
         # Proveri da postoje tabele pre kreiranja view-a
         def table_exists(db_alias: str, tbl: str) -> bool:
             q = f"""
