@@ -73,19 +73,16 @@ def table_exists(schema: str, table: str) -> bool:
 if os.path.exists(DB_PATH):
     st.success(f"✅ Baza {DB_PATH} je pronađena")
 
-    # prikaži dostupne tabele
-    st.write("📊 Dostupne tabele:", run_sql(DB_PATH, "SHOW TABLES"))
-
     # probaj prvo da čita iz kola_view ako postoji
     try:
         df_test = run_sql(DB_PATH, "SELECT COUNT(*) AS broj_redova FROM kola_view")
         if not df_test.empty:
-            st.write("📊 Broj redova u `kola_view`:", df_test.iloc[0, 0])
+            st.write("📊 Broj redova u `kola_view`:", df_test.iloc[0,0])
     except Exception:
         # fallback na tabelu kola
         df_test = run_sql(DB_PATH, "SELECT COUNT(*) AS broj_redova FROM kola")
         if not df_test.empty:
-            st.write("📊 Broj redova u `kola`:", df_test.iloc[0, 0])
+            st.write("📊 Broj redova u `kola`:", df_test.iloc[0,0])
 else:
     st.error(f"❌ Baza {DB_PATH} nije pronađena")
 # =========================
