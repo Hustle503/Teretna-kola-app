@@ -61,7 +61,7 @@ db_path = os.path.abspath(DB_PATH)
 # =========================
 #  Helper funkcije
 # =========================
-ddef run_sql(db_path: str, sql: str) -> pd.DataFrame:
+def run_sql(db_path: str, sql: str) -> pd.DataFrame:
     try:
         con = duckdb.connect(db_path, read_only=True)
         df = con.execute(sql).fetchdf()
