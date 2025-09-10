@@ -336,20 +336,22 @@ with tab5:
     if st.button("🔎 Prikaži poslednje unose"):
         try:
             q_last = f"""
-                SELECT s.SerijaIpodserija, k.*
-                FROM stanje s
-                JOIN "{table_name}" k
-                  ON CAST(s.SerijaIpodserija AS TEXT) = REPLACE(k.broj_kola_bez_rezima_i_kb, ' ', '')
-                QUALIFY ROW_NUMBER() OVER (
-                    PARTITION BY s.SerijaIpodserija
-                    ORDER BY k.DatumVreme DESC
-                ) = 1
-            """
-            df_last = run_sql(DB_PATH, q_last)
-            st.success(f"✅ Pronađeno {len(df_last)} poslednjih unosa za kola iz Excel tabele.")
-            st.dataframe(df_last, use_container_width=True)
-        except Exception as e:
-            st.error(f"Greška u upitu: {e}")
+    WITH ranked AS (
+        SELECT 
+            s.SerijaIpodserija,
+            k.*,
+            ROW_NUMBER() OVER (
+                PARTITION BY s.SerijaIpodserija
+                ORDER BY k.DatumVreme DESC
+            ) AS rn
+        FROM stanje s
+        JOIN "{table_name}" k
+          ON CAST(s.SerijaIpodserija AS TEXT) = REPLACE(k.broj_kola_bez_rezima_i_kb, ' ', '')
+    )
+    SELECT *
+    FROM ranked
+    WHERE rn = 1
+"""
 # ---------- Tab 6: Pretraga kola ----------
 with tab6:
     st.subheader("🔍 Pretraga kola po broju i periodu")
