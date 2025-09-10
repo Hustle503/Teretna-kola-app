@@ -62,7 +62,7 @@ def merge_parts():
         st.write("📂 Fajlovi koje sam našao:", part_files)
 
 # =========================
-# Parser TXT fajlova
+# Učitavanje novih TXT fajlova u tabelu novi_unosi
 # =========================
 def parse_txt(path) -> pl.DataFrame:
     rows = []
@@ -86,17 +86,25 @@ def parse_txt(path) -> pl.DataFrame:
                 "NetoTone": line[83:86].strip(),
                 "Broj vagona": line[0:12].strip(),
                 "Broj kola": line[1:11].strip(),
+                "Broj kola bez rezima i kb": line[2:11].strip(),
                 "source_file": os.path.basename(path),
             })
-
     df = pl.DataFrame(rows)
 
     # Ispravka vremena 2400 → 0000 i pomeranje datuma
     df = df.with_columns([
-        pl.when(pl.col("Vreme") == "2400").then(pl.lit("0000")).otherwise(pl.col("Vreme")).alias("Vreme"),
         pl.when(pl.col("Vreme") == "2400")
-          .then((pl.col("Datum").str.strptime(pl.Date, "%Y%m%d", strict=False) + pl.duration(days=1)).dt.strftime("%Y%m%d"))
-          .otherwise(pl.col("Datum")).alias("Datum"),
+          .then(pl.lit("0000"))
+          .otherwise(pl.col("Vreme"))
+          .alias("Vreme"),
+
+        pl.when(pl.col("Vreme") == "2400")
+          .then(
+              (pl.col("Datum").str.strptime(pl.Date, "%Y%m%d", strict=False) + pl.duration(days=1))
+              .dt.strftime("%Y%m%d")
+          )
+          .otherwise(pl.col("Datum"))
+          .alias("Datum"),
     ])
 
     # Kombinovana kolona DatumVreme
@@ -114,6 +122,47 @@ def parse_txt(path) -> pl.DataFrame:
     ])
 
     return df
+
+
+# =========================
+# Spajanje baze i novih fajlova
+# =========================
+if os.path.exists(DB_PATH):
+    con = duckdb.connect(DB_PATH)
+
+    # Učitaj TXT fajlove iz "novi_unos"
+    dfs = []
+    folder_path = "novi_unos"
+    if os.path.exists(folder_path):
+        for fname in os.listdir(folder_path):
+            if fname.endswith(".txt"):
+                fpath = os.path.join(folder_path, fname)
+                df_txt = parse_txt(fpath)
+                dfs.append(df_txt)
+
+    if dfs:
+        df_all = pl.concat(dfs)
+
+        # prebaci u DuckDB
+        con.register("df_tmp", df_all.to_pandas())
+        con.execute("CREATE OR REPLACE TABLE novi_unosi AS SELECT * FROM df_tmp")
+        con.unregister("df_tmp")
+        st.success(f"✅ Učitano {len(df_all)} novih redova u tabelu 'novi_unosi'")
+    else:
+        # ako nema fajlova, napravi praznu tabelu
+        con.execute("CREATE OR REPLACE TABLE novi_unosi AS SELECT NULL as BrojKola WHERE FALSE")
+        st.warning("⚠️ Nema TXT fajlova u 'novi_unos' folderu")
+
+    # Kreiraj VIEW koji spaja sve
+    con.execute("""
+        CREATE OR REPLACE VIEW kola_sve AS
+        SELECT * FROM kola
+        UNION ALL
+        SELECT * FROM novi_unosi
+    """)
+    con.close()
+
+    st.success("✅ View 'kola_sve' je spreman za upotrebu")
 
 # =========================
 # Funkcije za rad sa bazom
