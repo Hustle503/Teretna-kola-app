@@ -42,7 +42,7 @@ if not os.path.exists(DB_PATH):
             st.error(f"❌ Ni pydrive2 nije uspeo: {ee}")
 
     # Nakon preuzimanja spajamo fajlove
-     Nađi sve part fajlove
+    # Nađi sve part fajlove
 part_files = sorted(
     [f for f in os.listdir(".") if re.match(r"Copy of kola_sk\.db\.part\d+", f)],
     key=lambda x: int(re.search(r"part(\d+)", x).group(1))
