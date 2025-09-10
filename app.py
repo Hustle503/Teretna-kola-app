@@ -42,20 +42,21 @@ if not os.path.exists(DB_PATH):
             st.error(f"❌ Ni pydrive2 nije uspeo: {ee}")
 
     # Nakon preuzimanja spajamo fajlove
-    part_files = sorted(
-        [f for f in os.listdir(".") if re.match(r"kola_sk\.db\.part\d+", f)],
-        key=lambda x: int(re.search(r"part(\d+)", x).group(1))
-    )
+     Nađi sve part fajlove
+part_files = sorted(
+    [f for f in os.listdir(".") if re.match(r"Copy of kola_sk\.db\.part\d+", f)],
+    key=lambda x: int(re.search(r"part(\d+)", x).group(1))
+)
 
-    if part_files and len(part_files) == 48:
-        with open(DB_PATH, "wb") as outfile:
-            for fname in part_files:
-                st.write(f"➡️ Dodajem {fname}")
-                with open(fname, "rb") as infile:
-                    outfile.write(infile.read())
-        st.success(f"✅ Spojeno {len(part_files)} delova → {DB_PATH}")
-    else:
-        st.error(f"❌ Nije pronađeno svih 48 fajlova (.part1 … .part48). Nađeno: {len(part_files)}")
+if len(part_files) == 48:
+    with open(DB_PATH, "wb") as outfile:
+        for fname in part_files:
+            print(f"➡️ Dodajem {fname}")
+            with open(fname, "rb") as infile:
+                outfile.write(infile.read())
+    print(f"✅ Spojeno {len(part_files)} delova u {DB_PATH}")
+else:
+    print(f"❌ Nađeno {len(part_files)} fajlova, a očekivano je 48")
 # =========================
 # Provera i inicijalizacija baze
 # =========================
