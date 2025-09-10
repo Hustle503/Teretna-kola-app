@@ -224,20 +224,23 @@ st.sidebar.markdown("---")
 st.sidebar.caption("Sve tabele možete koristiti u SQL upitima. Glavni podaci su u 'kola_view'.")
 
 # =========================
-s.SerijaIpodserija,
-k.*,
-ROW_NUMBER() OVER (
-PARTITION BY s.SerijaIpodserija
-ORDER BY k.DatumVreme DESC
-) AS rn
-FROM stanje s
-JOIN "{table_name}" k
-ON CAST(s.SerijaIpodserija AS TEXT) = REPLACE(k.broj_kola_bez_rezima_i_kb, ' ', '')
+q_last = f"""
+WITH ranked AS (
+    SELECT 
+        s.SerijaIpodserija,
+        k.*,
+        ROW_NUMBER() OVER (
+            PARTITION BY s.SerijaIpodserija
+            ORDER BY k.DatumVreme DESC
+        ) AS rn
+    FROM stanje s
+    JOIN "{table_name}" k
+      ON CAST(s.SerijaIpodserija AS TEXT) = REPLACE(k.broj_kola_bez_rezima_i_kb, ' ', '')
+)
 SELECT *
 FROM ranked
 WHERE rn = 1
 """
-
 
 df_last = run_sql(DB_PATH, q_last)
 if df_last.empty:
