@@ -329,29 +329,39 @@ with tab4:
         st.error(f"Greška pri čitanju: {e}")
         
 # ---------- Tab 5: Poslednje stanje kola ----------
-
 with tab5:
     st.subheader("📌 Poslednji unos za 4098 kola iz Excel tabele")
 
     if st.button("🔎 Prikaži poslednje unose"):
         try:
             q_last = f"""
-    WITH ranked AS (
-        SELECT 
-            s.SerijaIpodserija,
-            k.*,
-            ROW_NUMBER() OVER (
-                PARTITION BY s.SerijaIpodserija
-                ORDER BY k.DatumVreme DESC
-            ) AS rn
-        FROM stanje s
-        JOIN "{table_name}" k
-          ON CAST(s.SerijaIpodserija AS TEXT) = REPLACE(k.broj_kola_bez_rezima_i_kb, ' ', '')
-    )
-    SELECT *
-    FROM ranked
-    WHERE rn = 1
-"""
+                WITH ranked AS (
+                    SELECT 
+                        s.SerijaIpodserija,
+                        k.*,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY s.SerijaIpodserija
+                            ORDER BY k.DatumVreme DESC
+                        ) AS rn
+                    FROM stanje s
+                    JOIN "{table_name}" k
+                      ON CAST(s.SerijaIpodserija AS TEXT) = REPLACE(k.broj_kola_bez_rezima_i_kb, ' ', '')
+                )
+                SELECT *
+                FROM ranked
+                WHERE rn = 1
+            """
+
+            df_last = run_sql(DB_PATH, q_last)   # 👈 OVO NEDOSTAJE
+            if df_last.empty:
+                st.warning("⚠️ Nema pronađenih podataka.")
+            else:
+                st.success(f"✅ Pronađeno {len(df_last)} poslednjih unosa.")
+                st.dataframe(df_last, use_container_width=True)
+
+        except Exception as e:
+            st.error(f"Greška u upitu: {e}")
+
 # ---------- Tab 6: Pretraga kola ----------
 
 with tab6:
