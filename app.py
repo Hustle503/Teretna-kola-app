@@ -17,21 +17,25 @@ import polars as pl
 DB_PATH = "kola_sk.db"
 FOLDER_ID = "1q__8P3gY-JMzqD5cpt8avm_7VAY-fHWI"
 NOVI_UNOS_FOLDER = "novi_unos"   # lokalni folder gde dodaješ txt fajlove
+NOVI_UNOS_FOLDER_ID = "1XQEUt3_TjM_lWahZHoZmlANExIwDwBW1"  # Google Drive ID za "novi unos"
 
+os.makedirs(NOVI_UNOS_FOLDER, exist_ok=True)
 # =========================
 # Fallback download sa pydrive2
 # =========================
-def download_with_pydrive2(folder_id: str):
+def download_with_pydrive2(folder_id: str, dest_folder: str = "."):
     gauth = GoogleAuth()
     gauth.CommandLineAuth()
     drive = GoogleDrive(gauth)
 
     file_list = drive.ListFile({'q': f"'{folder_id}' in parents and trashed=false"}).GetList()
-    st.write(f"📂 Pydrive2 našao {len(file_list)} fajlova u folderu")
+    st.write(f"📂 Nađeno {len(file_list)} fajlova u Google Drive folderu")
+
     for f in file_list:
         fname = f["title"]
-        st.write(f"⬇️ Preuzimam {fname}...")
-        f.GetContentFile(fname)
+        dest_path = os.path.join(dest_folder, fname)
+        st.write(f"⬇️ Preuzimam {fname} → {dest_path}")
+        f.GetContentFile(dest_path)
 
 # =========================
 # Merge delova u jednu bazu
@@ -64,7 +68,7 @@ def merge_parts():
 # =========================
 # Učitavanje novih TXT fajlova u tabelu novi_unosi
 # =========================
-def parse_txt(path) -> pl.DataFrame:
+def parse_txt(path) -> pd.DataFrame:
     rows = []
     with open(path, "r", encoding="utf-8", errors="ignore") as f:
         for line in f:
@@ -89,39 +93,30 @@ def parse_txt(path) -> pl.DataFrame:
                 "Broj kola bez rezima i kb": line[2:11].strip(),
                 "source_file": os.path.basename(path),
             })
-    df = pl.DataFrame(rows)
+    return pd.DataFrame(rows)
 
-    # Ispravka vremena 2400 → 0000 i pomeranje datuma
-    df = df.with_columns([
-        pl.when(pl.col("Vreme") == "2400")
-          .then(pl.lit("0000"))
-          .otherwise(pl.col("Vreme"))
-          .alias("Vreme"),
+# =========================
+# Automatsko povlačenje novih fajlova
+# =========================
+if not os.listdir(NOVI_UNOS_FOLDER):
+    st.info("☁️ Preuzimam nove TXT fajlove sa Google Drive (novi unos)...")
+    download_with_pydrive2(NOVI_UNOS_FOLDER_ID, NOVI_UNOS_FOLDER)
 
-        pl.when(pl.col("Vreme") == "2400")
-          .then(
-              (pl.col("Datum").str.strptime(pl.Date, "%Y%m%d", strict=False) + pl.duration(days=1))
-              .dt.strftime("%Y%m%d")
-          )
-          .otherwise(pl.col("Datum"))
-          .alias("Datum"),
-    ])
+txt_files = [os.path.join(NOVI_UNOS_FOLDER, f) for f in os.listdir(NOVI_UNOS_FOLDER) if f.endswith(".txt")]
 
-    # Kombinovana kolona DatumVreme
-    df = df.with_columns([
-        (pl.col("Datum") + " " + pl.col("Vreme"))
-            .str.strptime(pl.Datetime, "%Y%m%d %H%M", strict=False)
-            .alias("DatumVreme"),
-    ])
+if txt_files:
+    dfs = [parse_txt(f) for f in txt_files]
+    df_all = pd.concat(dfs, ignore_index=True)
 
-    # Brojevi u int
-    df = df.with_columns([
-        pl.col("tara").cast(pl.Int32, strict=False),
-        pl.col("NetoTone").cast(pl.Int32, strict=False),
-        pl.col("Inv br").cast(pl.Int32, strict=False),
-    ])
+    con = duckdb.connect(DB_PATH)
+    con.register("df_novi", df_all)
+    con.execute("""CREATE OR REPLACE TABLE novi_unosi AS SELECT * FROM df_novi""")
+    con.unregister("df_novi")
+    con.close()
 
-    return df
+    st.success(f"✅ Učitan {len(df_all)} redova iz {len(txt_files)} TXT fajlova u tabelu 'novi_unosi'")
+else:
+    st.warning("⚠️ Nema pronađenih TXT fajlova u folderu 'novi_unos'.")
 
 
 # =========================
