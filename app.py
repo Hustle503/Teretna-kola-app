@@ -3,6 +3,7 @@ import re
 import io
 import time
 import duckdb
+import shutil
 import pandas as pd
 import streamlit as st
 import gdown
@@ -35,10 +36,20 @@ def download_with_pydrive2(folder_id: str):
 # Merge delova u jednu bazu
 # =========================
 def merge_parts():
-    part_files = sorted(
-        [f for f in os.listdir(".") if re.match(r"(Copy of )?kola_sk\.db\.part\d+$", f)],
-        key=lambda x: int(re.search(r"part(\d+)", x).group(1))
-    )
+    part_files = []
+    for root, dirs, files in os.walk("."):
+        for f in files:
+            if re.match(r"(Copy of )?kola_sk\.db\.part\d+$", f):
+                full_path = os.path.join(root, f)
+                # ako nije u root folderu, prebaci ga u root
+                if root != ".":
+                    dest_path = os.path.join(".", f)
+                    shutil.move(full_path, dest_path)
+                    full_path = dest_path
+                part_files.append(full_path)
+
+    # Sortiranje po broju dela
+    part_files = sorted(part_files, key=lambda x: int(re.search(r"part(\d+)", x).group(1)))
 
     if len(part_files) == 48:
         with open(DB_PATH, "wb") as outfile:
@@ -49,7 +60,7 @@ def merge_parts():
         st.success(f"✅ Spojeno {len(part_files)} delova → {DB_PATH}")
     else:
         st.error(f"❌ Nađeno {len(part_files)} fajlova, očekivano 48")
-
+        st.write("📂 Fajlovi koje sam našao:", part_files)
 # =========================
 # Preuzimanje i spajanje
 # =========================
