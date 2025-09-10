@@ -15,10 +15,13 @@ from pydrive2.drive import GoogleDrive
 DB_PATH = "kola_sk.db"
 FOLDER_ID = "1q__8P3gY-JMzqD5cpt8avm_7VAY-fHWI"
 
+# =========================
+# Fallback download sa pydrive2
+# =========================
 def download_with_pydrive2(folder_id: str):
-    """Fallback metoda ako gdown ne uspe."""
+    """Ako gdown ne uspe, koristi PyDrive2."""
     gauth = GoogleAuth()
-    gauth.LocalWebserverAuth() if os.environ.get("STREAMLIT_RUNTIME") is None else gauth.CommandLineAuth()
+    gauth.CommandLineAuth()
     drive = GoogleDrive(gauth)
 
     file_list = drive.ListFile({'q': f"'{folder_id}' in parents and trashed=false"}).GetList()
@@ -28,21 +31,10 @@ def download_with_pydrive2(folder_id: str):
         st.write(f"⬇️ Preuzimam {fname}...")
         f.GetContentFile(fname)
 
-if not os.path.exists(DB_PATH):
-    st.info("☁️ Preuzimam delove baze sa Google Drive...")
-
-    try:
-        # Prvo pokušaj sa gdown
-        gdown.download_folder(id=FOLDER_ID, quiet=False, use_cookies=False)
-    except Exception as e:
-        st.warning(f"⚠️ gdown nije uspeo ({e}), prelazim na pydrive2...")
-        try:
-            download_with_pydrive2(FOLDER_ID)
-        except Exception as ee:
-            st.error(f"❌ Ni pydrive2 nije uspeo: {ee}")
-# ✅ SPOJ PART FAJLOVE U JEDAN
+# =========================
+# Merge delova u jednu bazu
+# =========================
 def merge_parts():
-    # Pronađi sve skinute part fajlove (Google Drive ih naziva "Copy of ...")
     part_files = sorted(
         [f for f in os.listdir(".") if re.match(r"(Copy of )?kola_sk\.db\.part\d+$", f)],
         key=lambda x: int(re.search(r"part(\d+)", x).group(1))
@@ -51,24 +43,31 @@ def merge_parts():
     if len(part_files) == 48:
         with open(DB_PATH, "wb") as outfile:
             for fname in part_files:
-                print(f"➡️ Dodajem {fname}")
+                st.write(f"➡️ Dodajem {fname}")
                 with open(fname, "rb") as infile:
                     outfile.write(infile.read())
-        print(f"✅ Spojeno {len(part_files)} delova u {DB_PATH}")
+        st.success(f"✅ Spojeno {len(part_files)} delova → {DB_PATH}")
     else:
-        print(f"❌ Nađeno {len(part_files)} fajlova, a očekivano je 48")
+        st.error(f"❌ Nađeno {len(part_files)} fajlova, očekivano 48")
 
-# Pozovi merge odmah posle downloada
-merge_parts()
+# =========================
+# Preuzimanje i spajanje
+# =========================
+if not os.path.exists(DB_PATH):
+    st.info("☁️ Preuzimam delove baze sa Google Drive...")
 
-# ✅ Provera da li je baza kreirana
-if os.path.exists(DB_PATH):
-    print(f"✅ Baza {DB_PATH} je spremna")
-else:
-    print("❌ Baza kola_sk.db nije pronađena")
+    try:
+        gdown.download_folder(id=FOLDER_ID, quiet=False, use_cookies=False)
+    except Exception as e:
+        st.warning(f"⚠️ gdown nije uspeo ({e}), prelazim na pydrive2...")
+        try:
+            download_with_pydrive2(FOLDER_ID)
+        except Exception as ee:
+            st.error(f"❌ Ni pydrive2 nije uspeo: {ee}")
 
-    # Nakon preuzimanja spajamo fajlove
-    
+    # ✅ Tek posle downloada spajaj
+    merge_parts()
+
 # =========================
 # Provera i inicijalizacija baze
 # =========================
@@ -88,8 +87,6 @@ if os.path.exists(DB_PATH):
         st.error(f"❌ Problem sa bazom: {e}")
 else:
     st.error(f"❌ Baza {DB_PATH} nije pronađena")
-
-
 # =========================
 # Funkcije za rad sa bazom
 # =========================
