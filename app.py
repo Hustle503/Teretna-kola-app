@@ -244,18 +244,14 @@ WHERE rn = 1
 
 df_last = run_sql(DB_PATH, q_last)
 if df_last.empty:
-st.warning("⚠️ Nema pronađenih podataka.")
+    st.warning("⚠️ Nema pronađenih podataka.")
 else:
-st.success(f"✅ Pronađeno {len(df_last)} poslednjih unosa.")
-st.dataframe(df_last, use_container_width=True)
-
+    st.success(f"✅ Pronađeno {len(df_last)} poslednjih unosa.")
+    st.dataframe(df_last, use_container_width=True)
 
 except Exception as e:
-st.error(f"Greška u upitu: {e}")
+    st.error(f"Greška u upitu: {e}")
 
-import time
-import streamlit as st
-import pandas as pd
 
 # =========================
 # Glavni naslov i tabovi
