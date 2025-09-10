@@ -179,7 +179,16 @@ st.sidebar.caption("Sve tabele možete koristiti u SQL upitima. Glavni podaci su
 # =========================
 # Glavni naslov i tabovi
 # =========================
-st.title("🚃 Teretna kola SK — kontrolna tabla")
+# Glavne promenljive sa fallback logikom
+if table_exists("main", "kola_view"):
+    table_name = "kola_view"
+elif table_exists("main", "kola"):
+    table_name = "kola"
+else:
+    st.error("❌ Nema ni 'kola_view' ni 'kola' u bazi.")
+    st.stop()
+
+db_path = DB_PATH
 
 st.title("🚃 Teretna kola SK — kontrolna tabla")
 
@@ -190,14 +199,14 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
 with tab1:
     col_a, col_b, col_c, col_d = st.columns(4)
     try:
-        df_cnt = run_sql(db_path, f'SELECT COUNT(*) AS broj_redova FROM "{table_name}"')
+        df_cnt = run_sql(DB_PATH, f'SELECT COUNT(*) AS broj_redova FROM "{table_name}"')
         col_a.metric("Ukupan broj redova", f"{int(df_cnt['broj_redova'][0]):,}".replace(",", "."))
 
-        df_files = run_sql(db_path, f'SELECT COUNT(DISTINCT source_file) AS fajlova FROM "{table_name}"')
+        df_files = run_sql(DB_PATH, f'SELECT COUNT(DISTINCT source_file) AS fajlova FROM "{table_name}"')
         col_b.metric("Učitanih fajlova", int(df_files["fajlova"][0]))
 
         df_range = run_sql(
-            db_path,
+            DB_PATH,
             f'''
             SELECT
               MIN(DatumVreme) AS min_dt,
@@ -214,7 +223,7 @@ with tab1:
         st.divider()
         st.subheader("Učitanih redova po fajlu (top 20)")
         df_by_file = run_sql(
-            db_path,
+            DB_PATH,
             f'''
             SELECT source_file, COUNT(*) AS broj
             FROM "{table_name}"
@@ -241,7 +250,7 @@ with tab2:
         GROUP BY 1
         ORDER BY 1
     """
-    df_month = run_sql(db_path, q_month)
+    df_month = run_sql(DB_PATH, q_month)
     st.line_chart(df_month.set_index("mesec")["ukupno_tona"])
 
     st.subheader("Top 20 stanica po broju vagona")
@@ -252,7 +261,7 @@ with tab2:
         ORDER BY broj DESC
         LIMIT 20
     """
-    df_sta = run_sql(db_path, q_sta)
+    df_sta = run_sql(DB_PATH, q_sta)
     st.bar_chart(df_sta.set_index("Stanica")["broj"])
 
     c1, c2 = st.columns(2)
@@ -265,7 +274,7 @@ with tab2:
             ORDER BY prosek_tona DESC
             LIMIT 20
         """
-        df_tip = run_sql(db_path, q_tip)
+        df_tip = run_sql(DB_PATH, q_tip)
         st.dataframe(df_tip, use_container_width=True)
     with c2:
         st.subheader("Prosečna tara po tipu kola")
@@ -276,7 +285,7 @@ with tab2:
             ORDER BY prosek_tare DESC
             LIMIT 20
         """
-        df_tara = run_sql(db_path, q_tara)
+        df_tara = run_sql(DB_PATH, q_tara)
         st.dataframe(df_tara, use_container_width=True)
 
 # ---------- Tab 3: SQL upiti ----------
@@ -289,7 +298,7 @@ with tab3:
     if run_btn:
         t0 = time.time()
         try:
-            df_user = run_sql(db_path, user_sql)
+            df_user = run_sql(DB_PATH, user_sql)
             elapsed = time.time() - t0
             st.success(f"OK ({elapsed:.2f}s) — {len(df_user):,} redova".replace(",", "."))
             st.dataframe(df_user, use_container_width=True)
@@ -314,7 +323,7 @@ with tab4:
     )
     try:
         cols_sql = ", ".join([f'"{c}"' if c not in ("DatumVreme",) else c for c in cols])
-        df_preview = run_sql(db_path, f'SELECT {cols_sql} FROM "{table_name}" LIMIT {int(limit)}')
+        df_preview = run_sql(DB_PATH, f'SELECT {cols_sql} FROM "{table_name}" LIMIT {int(limit)}')
         st.dataframe(df_preview, use_container_width=True)
     except Exception as e:
         st.error(f"Greška pri čitanju: {e}")
@@ -336,7 +345,7 @@ with tab5:
                     ORDER BY k.DatumVreme DESC
                 ) = 1
             """
-            df_last = run_sql(db_path, q_last)
+            df_last = run_sql(DB_PATH, q_last)
             st.success(f"✅ Pronađeno {len(df_last)} poslednjih unosa za kola iz Excel tabele.")
             st.dataframe(df_last, use_container_width=True)
         except Exception as e:
@@ -361,7 +370,7 @@ with tab6:
                   AND "DatumVreme" BETWEEN '{start_date}' AND '{end_date}'
                 ORDER BY "DatumVreme" DESC
             """
-            df_search = run_sql(db_path, q_search)
+            df_search = run_sql(DB_PATH, q_search)
 
             if df_search.empty:
                 st.warning("⚠️ Nema podataka za zadate kriterijume.")
@@ -396,7 +405,7 @@ with tab7:
         FROM poslednji
         WHERE rn = 1
         """
-        df_last = run_sql(db_path, q)
+        df_last = run_sql(DB_PATH, q)
 
         # Pivot tabela po stanici
         df_pivot = (
@@ -513,7 +522,7 @@ with tab8:
         WHERE rn = 1 OR rn IS NULL
         ORDER BY BrojDana ASC
         """
-        df_tip0 = run_sql(db_path, q)
+        df_tip0 = run_sql(DB_PATH, q)
 
         if "BrojDana" in df_tip0.columns:
             df_tip0["BrojDana"] = df_tip0["BrojDana"].astype("Int64")
@@ -591,7 +600,7 @@ with tab9:
         WHERE rn = 1 OR rn IS NULL
         ORDER BY BrojDana DESC
         """
-        df_tip1 = run_sql(db_path, q)
+        df_tip1 = run_sql(DB_PATH, q)
 
         # Ako nema DatumVreme → BrojDana će biti NaN
         if "BrojDana" in df_tip1.columns:
@@ -653,7 +662,7 @@ with tab10:
         FROM poslednji
         WHERE rn = 1
         """
-        df_last = run_sql(db_path, q)
+        df_last = run_sql(DB_PATH, q)
 
         # Pivot tabela po seriji
         df_pivot = (
