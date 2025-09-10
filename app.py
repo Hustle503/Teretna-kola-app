@@ -327,9 +327,9 @@ with tab4:
         st.dataframe(df_preview, use_container_width=True)
     except Exception as e:
         st.error(f"Greška pri čitanju: {e}")
+        
 # ---------- Tab 5: Poslednje stanje kola ----------
 
-# ---------- Tab 5: Poslednji unosi ----------
 with tab5:
     st.subheader("📌 Poslednji unos za 4098 kola iz Excel tabele")
 
@@ -353,6 +353,7 @@ with tab5:
     WHERE rn = 1
 """
 # ---------- Tab 6: Pretraga kola ----------
+
 with tab6:
     st.subheader("🔍 Pretraga kola po broju i periodu")
 
