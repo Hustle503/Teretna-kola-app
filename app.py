@@ -233,7 +233,6 @@ ORDER BY k.DatumVreme DESC
 FROM stanje s
 JOIN "{table_name}" k
 ON CAST(s.SerijaIpodserija AS TEXT) = REPLACE(k.broj_kola_bez_rezima_i_kb, ' ', '')
-)
 SELECT *
 FROM ranked
 WHERE rn = 1
