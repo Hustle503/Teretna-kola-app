@@ -130,7 +130,7 @@ def parse_txt(path) -> pl.DataFrame:
 if os.path.exists(DB_PATH):
     con = duckdb.connect(DB_PATH)
 
-    # Učitaj TXT fajlove iz "novi_unos"
+    # 1️⃣ Učitaj TXT fajlove iz "novi_unos"
     dfs = []
     folder_path = "novi_unos"
     if os.path.exists(folder_path):
@@ -143,17 +143,20 @@ if os.path.exists(DB_PATH):
     if dfs:
         df_all = pl.concat(dfs)
 
-        # prebaci u DuckDB
+        # Ako ima novih fajlova → kreiraj/menjaj tabelu
         con.register("df_tmp", df_all.to_pandas())
         con.execute("CREATE OR REPLACE TABLE novi_unosi AS SELECT * FROM df_tmp")
         con.unregister("df_tmp")
         st.success(f"✅ Učitano {len(df_all)} novih redova u tabelu 'novi_unosi'")
     else:
-        # ako nema fajlova, napravi praznu tabelu
-        con.execute("CREATE OR REPLACE TABLE novi_unosi AS SELECT NULL as BrojKola WHERE FALSE")
-        st.warning("⚠️ Nema TXT fajlova u 'novi_unos' folderu")
+        # Ako nema fajlova, napravi praznu tabelu sa strukturom
+        con.execute("""
+            CREATE OR REPLACE TABLE novi_unosi AS 
+            SELECT * FROM kola WHERE FALSE
+        """)
+        st.warning("⚠️ Nema TXT fajlova u 'novi_unos' folderu → kreirana prazna tabela")
 
-    # Kreiraj VIEW koji spaja sve
+    # 2️⃣ Tek sada kreiraj VIEW
     con.execute("""
         CREATE OR REPLACE VIEW kola_sve AS
         SELECT * FROM kola
