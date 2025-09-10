@@ -40,23 +40,35 @@ if not os.path.exists(DB_PATH):
             download_with_pydrive2(FOLDER_ID)
         except Exception as ee:
             st.error(f"❌ Ni pydrive2 nije uspeo: {ee}")
+# ✅ SPOJ PART FAJLOVE U JEDAN
+def merge_parts():
+    # Pronađi sve skinute part fajlove (Google Drive ih naziva "Copy of ...")
+    part_files = sorted(
+        [f for f in os.listdir(".") if re.match(r"(Copy of )?kola_sk\.db\.part\d+$", f)],
+        key=lambda x: int(re.search(r"part(\d+)", x).group(1))
+    )
+
+    if len(part_files) == 48:
+        with open(DB_PATH, "wb") as outfile:
+            for fname in part_files:
+                print(f"➡️ Dodajem {fname}")
+                with open(fname, "rb") as infile:
+                    outfile.write(infile.read())
+        print(f"✅ Spojeno {len(part_files)} delova u {DB_PATH}")
+    else:
+        print(f"❌ Nađeno {len(part_files)} fajlova, a očekivano je 48")
+
+# Pozovi merge odmah posle downloada
+merge_parts()
+
+# ✅ Provera da li je baza kreirana
+if os.path.exists(DB_PATH):
+    print(f"✅ Baza {DB_PATH} je spremna")
+else:
+    print("❌ Baza kola_sk.db nije pronađena")
 
     # Nakon preuzimanja spajamo fajlove
-    # Nađi sve part fajlove
-part_files = sorted(
-    [f for f in os.listdir(".") if re.match(r"Copy of kola_sk\.db\.part\d+", f)],
-    key=lambda x: int(re.search(r"part(\d+)", x).group(1))
-)
-
-if len(part_files) == 48:
-    with open(DB_PATH, "wb") as outfile:
-        for fname in part_files:
-            print(f"➡️ Dodajem {fname}")
-            with open(fname, "rb") as infile:
-                outfile.write(infile.read())
-    print(f"✅ Spojeno {len(part_files)} delova u {DB_PATH}")
-else:
-    print(f"❌ Nađeno {len(part_files)} fajlova, a očekivano je 48")
+    
 # =========================
 # Provera i inicijalizacija baze
 # =========================
