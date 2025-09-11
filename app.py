@@ -23,7 +23,7 @@ folder_url_parts = f"https://drive.google.com/drive/folders/{FOLDER_ID}?usp=shar
 st.info(f"⬇️ Preuzimam part fajlove iz foldera: {folder_url_parts}")
 gdown.download_folder(
     url=folder_url_parts,
-    output=".",
+    output=".",   # skida u trenutni folder
     quiet=False,
     use_cookies=False
 )
