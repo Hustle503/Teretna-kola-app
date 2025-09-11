@@ -78,12 +78,8 @@ def parse_txt(path) -> pd.DataFrame:
             })
     return pd.DataFrame(rows)
 
-# =========================
-# Automatsko povlačenje novih fajlova
-# =========================
-if not os.listdir(NOVI_UNOS_FOLDER):
-    st.info("☁️ Preuzimam nove TXT fajlove sa Google Drive (novi unos)...")
-    download_with_pydrive2(NOVI_UNOS_FOLDER_ID, NOVI_UNOS_FOLDER)
+st.info("☁️ Osvežavam TXT fajlove sa Google Drive (novi unos)...")
+gdown.download_folder(id=NOVI_UNOS_FOLDER_ID, output=NOVI_UNOS_FOLDER, quiet=False, use_cookies=False)
 
 txt_files = [os.path.join(NOVI_UNOS_FOLDER, f) for f in os.listdir(NOVI_UNOS_FOLDER) if f.endswith(".txt")]
 
