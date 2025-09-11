@@ -38,7 +38,7 @@ try:
     st.success("✅ Svi .part fajlovi preuzeti")
 except Exception as e:
     st.warning(f"⚠️ Greška pri preuzimanju part fajlova: {e}. Ako su fajlovi već skinuti, nastavljam...")
-        merge_parts()
+    merge_parts()
 except Exception as e:
     st.warning(f"⚠️ Greška pri preuzimanju part fajlova: {e}. Ako su fajlovi već skinuti, pokušavam merge...")
     merge_parts()
