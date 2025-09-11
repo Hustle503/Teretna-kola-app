@@ -7,6 +7,7 @@ import shutil
 import pandas as pd
 import streamlit as st
 import gdown
+import glob
 from pydrive2.auth import GoogleAuth
 from pydrive2.drive import GoogleDrive
 import polars as pl
@@ -42,6 +43,9 @@ except Exception as e:
 except Exception as e:
     st.warning(f"⚠️ Greška pri preuzimanju part fajlova: {e}. Ako su fajlovi već skinuti, pokušavam merge...")
     merge_parts()
+# Pretraga svih .db fajlova
+db_files = glob.glob("**/*.db", recursive=True)
+st.write("📂 Nađeni .db fajlovi:", db_files)
 con = duckdb.connect(DB_PATH)
 tables = con.execute("SHOW TABLES").fetchall()
 st.write("📋 Tabele u bazi:", tables)
