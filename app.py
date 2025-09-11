@@ -23,7 +23,7 @@ os.makedirs(NOVI_UNOS_FOLDER, exist_ok=True)
 # =========================
 # Fallback download sa pydrive2
 # =========================
-ef download_folder(folder_id: str, dest: str):
+def download_folder(folder_id: str, dest: str):
     os.makedirs(dest, exist_ok=True)
     url = f"https://drive.google.com/drive/folders/{folder_id}"
     gdown.download_folder(url, output=dest, quiet=False, use_cookies=False)
