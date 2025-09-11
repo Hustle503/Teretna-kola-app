@@ -19,7 +19,6 @@ FOLDER_ID = "1q__8P3gY-JMzqD5cpt8avm_7VAY-fHWI"
 NOVI_UNOS_FOLDER = "novi_unos"   # lokalni folder gde dodaješ txt fajlove
 NOVI_UNOS_FOLDER_ID = "1XQEUt3_TjM_lWahZHoZmlANExIwDwBW1"  # Google Drive ID za "novi unos"
 
- Preuzimanje part fajlova za DuckDB bazu
 folder_url_parts = f"https://drive.google.com/drive/folders/{FOLDER_ID}?usp=sharing"
 st.info(f"⬇️ Preuzimam part fajlove iz foldera: {folder_url_parts}")
 gdown.download_folder(
