@@ -42,6 +42,16 @@ def download_folder(folder_id: str, dest: str):
     os.makedirs(dest, exist_ok=True)
     url = f"https://drive.google.com/drive/folders/{folder_id}"
     gdown.download_folder(url, output=dest, quiet=False, use_cookies=False)
+try:
+    gdown.download_folder(
+        url=folder_url_parts,
+        output=".",
+        quiet=False,
+        use_cookies=False
+    )
+    st.success("✅ Svi .part fajlovi preuzeti")
+except Exception as e:
+    st.warning(f"⚠️ Greška pri preuzimanju: {e}. Ako su fajlovi već skinuti, nastavljam...")    
 
 # =========================
 # Merge delova u jednu bazu
