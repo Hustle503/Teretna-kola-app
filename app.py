@@ -79,7 +79,8 @@ def parse_txt(path) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 st.info("☁️ Osvežavam TXT fajlove sa Google Drive (novi unos)...")
-gdown.download_folder(id=NOVI_UNOS_FOLDER_ID, output=NOVI_UNOS_FOLDER, quiet=False, use_cookies=False)
+folder_url = f"https://drive.google.com/drive/folders/{NOVI_UNOS_FOLDER_ID}"
+gdown.download_folder(url=folder_url, output=NOVI_UNOS_FOLDER, quiet=False, use_cookies=False)
 
 txt_files = [os.path.join(NOVI_UNOS_FOLDER, f) for f in os.listdir(NOVI_UNOS_FOLDER) if f.endswith(".txt")]
 
