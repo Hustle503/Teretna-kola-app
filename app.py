@@ -42,6 +42,10 @@ except Exception as e:
 except Exception as e:
     st.warning(f"⚠️ Greška pri preuzimanju part fajlova: {e}. Ako su fajlovi već skinuti, pokušavam merge...")
     merge_parts()
+con = duckdb.connect(DB_PATH)
+tables = con.execute("SHOW TABLES").fetchall()
+st.write("📋 Tabele u bazi:", tables)
+con.close()
 
 # =========================
 # Preuzimanje TXT fajlova (novi unos)
