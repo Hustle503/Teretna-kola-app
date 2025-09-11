@@ -123,7 +123,7 @@ if os.path.exists(DB_PATH):
         con.register("df_novi", df_all.to_pandas())  # ako hoćeš pandas bridge
         con.execute("""CREATE OR REPLACE TABLE novi_unosi AS SELECT * FROM df_novi""")
         con.unregister("df_novi")
-con.close()
+        con.close()
     else:
         # Ako nema fajlova, napravi praznu tabelu sa strukturom
         con.execute("""
