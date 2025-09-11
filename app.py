@@ -124,11 +124,11 @@ if os.path.exists(DB_PATH):
 
     if dfs:
         dfs = [parse_txt(f) for f in txt_files]
-        df_all = pl.concat(dfs)
+        df_all = pd.concat(dfs, ignore_index=True)
 
         # Ako ima novih fajlova → kreiraj/menjaj tabelu
         con = duckdb.connect(DB_PATH)
-        con.register("df_novi", df_all.to_pandas())  # ako hoćeš pandas bridge
+        con.register("df_novi", df_all)
         con.execute("""CREATE OR REPLACE TABLE novi_unosi AS SELECT * FROM df_novi""")
         con.unregister("df_novi")
         con.close()
