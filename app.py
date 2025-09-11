@@ -42,7 +42,15 @@ except Exception as e:
     merge_parts()
 except Exception as e:
     st.warning(f"⚠️ Greška pri preuzimanju part fajlova: {e}. Ako su fajlovi već skinuti, pokušavam merge...")
-    merge_parts()
+    
+merge_parts()
+
+# Proveri da li je fajl napravljen
+import os
+if os.path.exists(DB_PATH):
+    st.success(f"✅ Spojena baza je napravljena: {DB_PATH}")
+else:
+    st.error("❌ Baza nije napravljena! Proveri da li imaš svih 48 .part fajlova.")
 # Pretraga svih .db fajlova
 db_files = glob.glob("**/*.db", recursive=True)
 st.write("📂 Nađeni .db fajlovi:", db_files)
