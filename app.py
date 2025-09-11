@@ -23,48 +23,31 @@ os.makedirs(NOVI_UNOS_FOLDER, exist_ok=True)
 # =========================
 # Fallback download sa pydrive2
 # =========================
-def download_with_pydrive2(folder_id: str, dest_folder: str = "."):
-    gauth = GoogleAuth()
-    gauth.CommandLineAuth()
-    drive = GoogleDrive(gauth)
-
-    file_list = drive.ListFile({'q': f"'{folder_id}' in parents and trashed=false"}).GetList()
-    st.write(f"📂 Nađeno {len(file_list)} fajlova u Google Drive folderu")
-
-    for f in file_list:
-        fname = f["title"]
-        dest_path = os.path.join(dest_folder, fname)
-        st.write(f"⬇️ Preuzimam {fname} → {dest_path}")
-        f.GetContentFile(dest_path)
+ef download_folder(folder_id: str, dest: str):
+    os.makedirs(dest, exist_ok=True)
+    url = f"https://drive.google.com/drive/folders/{folder_id}"
+    gdown.download_folder(url, output=dest, quiet=False, use_cookies=False)
 
 # =========================
 # Merge delova u jednu bazu
 # =========================
 def merge_parts():
     part_files = []
-    for root, dirs, files in os.walk("."):
-        for f in files:
-            if re.match(r"(Copy of )?kola_sk\.db\.part\d+$", f):
-                full_path = os.path.join(root, f)
-                if root != ".":
-                    dest_path = os.path.join(".", f)
-                    shutil.move(full_path, dest_path)
-                    full_path = dest_path
-                part_files.append(full_path)
+    for f in os.listdir("."):
+        if re.match(r"(Copy of )?kola_sk\.db\.part\d+$", f):
+            part_files.append(f)
 
     part_files = sorted(part_files, key=lambda x: int(re.search(r"part(\d+)", x).group(1)))
 
     if len(part_files) == 48:
         with open(DB_PATH, "wb") as outfile:
             for fname in part_files:
-                st.write(f"➡️ Dodajem {fname}")
                 with open(fname, "rb") as infile:
                     outfile.write(infile.read())
-        st.success(f"✅ Spojeno {len(part_files)} delova → {DB_PATH}")
+        print(f"✅ Spojeno {len(part_files)} delova → {DB_PATH}")
     else:
-        st.error(f"❌ Nađeno {len(part_files)} fajlova, očekivano 48")
-        st.write("📂 Fajlovi koje sam našao:", part_files)
-
+        print(f"❌ Nađeno {len(part_files)} fajlova, očekivano 48")
+        print("📂 Fajlovi koje sam našao:", part_files)
 # =========================
 # Učitavanje novih TXT fajlova u tabelu novi_unosi
 # =========================
