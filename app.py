@@ -14,44 +14,57 @@ import polars as pl
 # =========================
 # Putevi i folderi
 # =========================
+# =========================
+# Putevi i folderi
+# =========================
 DB_PATH = "kola_sk.db"
 FOLDER_ID = "1q__8P3gY-JMzqD5cpt8avm_7VAY-fHWI"
 NOVI_UNOS_FOLDER = "novi_unos"   # lokalni folder gde dodaješ txt fajlove
 NOVI_UNOS_FOLDER_ID = "1XQEUt3_TjM_lWahZHoZmlANExIwDwBW1"  # Google Drive ID za "novi unos"
 
+# =========================
+# Preuzimanje delova baze (.part fajlovi)
+# =========================
 folder_url_parts = f"https://drive.google.com/drive/folders/{FOLDER_ID}?usp=sharing"
 st.info(f"⬇️ Preuzimam part fajlove iz foldera: {folder_url_parts}")
-gdown.download_folder(
-    url=folder_url_parts,
-    output=".",   # skida u trenutni folder
-    quiet=False,
-    use_cookies=False
-)
-os.makedirs(NOVI_UNOS_FOLDER, exist_ok=True)
-folder_url = f"https://drive.google.com/drive/folders/{NOVI_UNOS_FOLDER_ID}?usp=sharing"
-st.info(f"⬇️ Preuzimam fajlove iz foldera: {folder_url}")
-gdown.download_folder(
-    url=folder_url,
-    output=NOVI_UNOS_FOLDER,
-    quiet=False,
-    use_cookies=False)
-# =========================
-# Fallback download sa pydrive2
-# =========================
-def download_folder(folder_id: str, dest: str):
-    os.makedirs(dest, exist_ok=True)
-    url = f"https://drive.google.com/drive/folders/{folder_id}"
-    gdown.download_folder(url, output=dest, quiet=False, use_cookies=False)
+
 try:
     gdown.download_folder(
         url=folder_url_parts,
-        output=".",
+        output=".",   # skida u trenutni folder
         quiet=False,
         use_cookies=False
     )
     st.success("✅ Svi .part fajlovi preuzeti")
 except Exception as e:
-    st.warning(f"⚠️ Greška pri preuzimanju: {e}. Ako su fajlovi već skinuti, nastavljam...")    
+    st.warning(f"⚠️ Greška pri preuzimanju part fajlova: {e}. Ako su fajlovi već skinuti, nastavljam...")
+
+# =========================
+# Preuzimanje TXT fajlova (novi unos)
+# =========================
+os.makedirs(NOVI_UNOS_FOLDER, exist_ok=True)
+folder_url = f"https://drive.google.com/drive/folders/{NOVI_UNOS_FOLDER_ID}?usp=sharing"
+st.info(f"⬇️ Preuzimam TXT fajlove iz foldera: {folder_url}")
+
+try:
+    gdown.download_folder(
+        url=folder_url,
+        output=NOVI_UNOS_FOLDER,
+        quiet=False,
+        use_cookies=False
+    )
+    st.success("✅ TXT fajlovi preuzeti")
+except Exception as e:
+    st.warning(f"⚠️ Greška pri preuzimanju TXT fajlova: {e}. Ako su fajlovi već skinuti, nastavljam...")
+
+# =========================
+# Fallback download sa pydrive2 (ako gdown ne uspe)
+# =========================
+def download_folder(folder_id: str, dest: str):
+    os.makedirs(dest, exist_ok=True)
+    url = f"https://drive.google.com/drive/folders/{folder_id}"
+    gdown.download_folder(url, output=dest, quiet=False, use_cookies=False)
+   
 
 # =========================
 # Merge delova u jednu bazu
