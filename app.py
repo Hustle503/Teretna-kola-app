@@ -151,7 +151,7 @@ def parse_txt(path) -> pl.DataFrame:
 # Preuzimanje i obrada TXT fajlova
 # =========================
 os.makedirs(NOVI_UNOS_FOLDER, exist_ok=True)
-folder_url = f"https://drive.google.com/drive/folders/{NOVI_UNOS_FOLDER_ID}?usp=sharing"
+folder_url = f"https://drive.google.com/drive/folders/{NOVI_UNOS_FOLDER_ID}"
 st.info(f"⬇️ Preuzimam TXT fajlove iz foldera: {folder_url}")
 try:
     gdown.download_folder(url=folder_url, output=NOVI_UNOS_FOLDER, quiet=False, use_cookies=False)
