@@ -161,13 +161,13 @@ except Exception as e:
 
 txt_files = [os.path.join(NOVI_UNOS_FOLDER, f) for f in os.listdir(NOVI_UNOS_FOLDER) if f.endswith(".txt")]
 
+df_all = pl.DataFrame()  # <- garantuje da postoji i kad nema fajlova
+
 if txt_files:
     dfs = [parse_txt(f) for f in txt_files]
     df_all = pl.concat(dfs)
 
-    # =========================
-    # Dodavanje kolona koje postoje u kola a ne u df_all
-    # =========================
+    # Dodaj nedostajuće kolone iz tabele kola
     con = duckdb.connect(DB_PATH)
     df_kola_sample = con.execute("SELECT * FROM kola LIMIT 5").fetchdf()
     con.close()
@@ -187,7 +187,7 @@ if txt_files:
         else:
             df_all = df_all.with_columns(pl.lit(None).alias(c))
 
-    # Registracija u DuckDB i kreiranje tabele novi_unosi
+    # Registruj i napravi tabelu
     con = duckdb.connect(DB_PATH)
     con.register("df_novi", df_all.to_pandas())
     con.execute("CREATE OR REPLACE TABLE novi_unosi AS SELECT * FROM df_novi")
@@ -195,9 +195,13 @@ if txt_files:
     con.close()
     st.success(f"✅ Učitan {len(df_all)} redova iz {len(txt_files)} TXT fajlova u tabelu 'novi_unosi'")
 else:
+    # Ako nema fajlova napravi praznu tabelu
+    con = duckdb.connect(DB_PATH)
+    con.execute("CREATE OR REPLACE TABLE novi_unosi AS SELECT * FROM kola WHERE FALSE")
+    con.close()
     st.warning("⚠️ Nema pronađenih TXT fajlova u folderu 'novi_unos'.")
-st.write("📋 Kolone u df_all (novi_unosi):", df_all.columns.tolist())
 
+st.write("📋 Kolone u df_all (novi_unosi):", df_all.columns)
 # =========================
 # Kreiranje view kola_sve
 # =========================
