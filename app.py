@@ -276,14 +276,14 @@ if os.path.exists(DB_PATH):
 
     # kreiraj pogled kola_sve
     def create_or_replace_table_from_df(db_path, table_name, df):
-    con = duckdb.connect(db_path)
-    try:
-        con.execute(f'DROP TABLE IF EXISTS "{table_name}"')
-        con.register("df_tmp", df.to_pandas())
-        con.execute(f'CREATE TABLE "{table_name}" AS SELECT * FROM df_tmp')
-        con.unregister("df_tmp")
-    finally:
-        con.close()
+        con = duckdb.connect(db_path)
+        try:
+            con.execute(f'DROP TABLE IF EXISTS "{table_name}"')
+            con.register("df_tmp", df.to_pandas())
+            con.execute(f'CREATE TABLE "{table_name}" AS SELECT * FROM df_tmp')
+            con.unregister("df_tmp")
+        finally:
+            con.close()
     # test
     try:
         df_test = run_sql(DB_PATH, "SELECT COUNT(*) AS broj_redova FROM kola_sve")
