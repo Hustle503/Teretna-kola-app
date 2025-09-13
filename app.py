@@ -189,12 +189,12 @@ if txt_files:
 df_all = df_all.select(cols_to_add)
 
 # Registruj i napravi tabelu
-    con = duckdb.connect(DB_PATH)
-    con.register("df_novi", df_all.to_pandas())
-    con.execute("CREATE OR REPLACE TABLE novi_unosi AS SELECT * FROM df_novi")
-    con.unregister("df_novi")
-    con.close()
-    st.success(f"✅ Učitan {len(df_all)} redova iz {len(txt_files)} TXT fajlova u tabelu 'novi_unosi'")
+con = duckdb.connect(DB_PATH)
+con.register("df_novi", df_all.to_pandas())
+con.execute("CREATE OR REPLACE TABLE novi_unosi AS SELECT * FROM df_novi")
+con.unregister("df_novi")
+con.close()
+st.success(f"✅ Učitan {len(df_all)} redova iz {len(txt_files)} TXT fajlova u tabelu 'novi_unosi'")
 
 else:
     # Ako nema fajlova napravi praznu tabelu
