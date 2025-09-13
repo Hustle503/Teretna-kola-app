@@ -194,6 +194,23 @@ if txt_files:
     con.unregister("df_novi")
     con.close()
     st.success(f"✅ Učitan {len(df_all)} redova iz {len(txt_files)} TXT fajlova u tabelu 'novi_unosi'")
+con = duckdb.connect(DB_PATH)
+
+# Izlistaj kolone iz obe tabele
+cols_kola = [r[0] for r in con.execute("DESCRIBE kola").fetchall()]
+cols_novi = [r[0] for r in con.execute("DESCRIBE novi_unosi").fetchall()]
+
+con.close()
+
+st.write("📋 Kolone u 'kola':", cols_kola)
+st.write("📋 Kolone u 'novi_unosi':", cols_novi)
+
+# Razlike
+diff1 = set(cols_kola) - set(cols_novi)
+diff2 = set(cols_novi) - set(cols_kola)
+
+st.warning(f"🔎 Kolone koje su u 'kola' a nema ih u 'novi_unosi': {diff1}")
+st.warning(f"🔎 Kolone koje su u 'novi_unosi' a nema ih u 'kola': {diff2}")
 else:
     # Ako nema fajlova napravi praznu tabelu
     con = duckdb.connect(DB_PATH)
