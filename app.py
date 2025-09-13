@@ -176,7 +176,18 @@ if os.path.exists(DB_PATH):
     if dfs:
         dfs = [parse_txt(f) for f in txt_files]
         df_all = pd.concat(dfs, ignore_index=True)
-
+        st.write("📋 Kolone u df_all (novi_unosi):", df_all.columns.tolist())
+        con = duckdb.connect(DB_PATH)
+        df_kola = con.execute("SELECT * FROM kola LIMIT 5").fetchdf()
+        con.close()
+        st.write("📋 Kolone u `kola`:", df_kola.columns.tolist())
+        # Brza provera razlika
+        set_kola = set(df_kola.columns)
+        set_novi = set(df_all.columns)
+        st.write("✅ Kolone koje su iste:", set_kola & set_novi)
+        st.write("➕ Kolone koje postoje samo u `kola`:", set_kola - set_novi)
+        st.write("➕ Kolone koje postoje samo u `novi_unosi`:", set_novi - set_kola)
+ 
         # Ako ima novih fajlova → kreiraj/menjaj tabelu
         con = duckdb.connect(DB_PATH)
         con.register("df_novi", df_all)
