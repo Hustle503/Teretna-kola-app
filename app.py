@@ -161,7 +161,7 @@ except Exception as e:
 
 txt_files = [os.path.join(NOVI_UNOS_FOLDER, f) for f in os.listdir(NOVI_UNOS_FOLDER) if f.endswith(".txt")]
 
-df_all = pl.DataFrame()  # <- garantuje da postoji i kad nema fajlova
+df_all = pl.DataFrame()  # garantuje da postoji i kad nema fajlova
 
 if txt_files:
     dfs = [parse_txt(f) for f in txt_files]
@@ -194,23 +194,7 @@ if txt_files:
     con.unregister("df_novi")
     con.close()
     st.success(f"✅ Učitan {len(df_all)} redova iz {len(txt_files)} TXT fajlova u tabelu 'novi_unosi'")
-con = duckdb.connect(DB_PATH)
 
-# Izlistaj kolone iz obe tabele
-cols_kola = [r[0] for r in con.execute("DESCRIBE kola").fetchall()]
-cols_novi = [r[0] for r in con.execute("DESCRIBE novi_unosi").fetchall()]
-
-con.close()
-
-st.write("📋 Kolone u 'kola':", cols_kola)
-st.write("📋 Kolone u 'novi_unosi':", cols_novi)
-
-# Razlike
-diff1 = set(cols_kola) - set(cols_novi)
-diff2 = set(cols_novi) - set(cols_kola)
-
-st.warning(f"🔎 Kolone koje su u 'kola' a nema ih u 'novi_unosi': {diff1}")
-st.warning(f"🔎 Kolone koje su u 'novi_unosi' a nema ih u 'kola': {diff2}")
 else:
     # Ako nema fajlova napravi praznu tabelu
     con = duckdb.connect(DB_PATH)
@@ -218,7 +202,22 @@ else:
     con.close()
     st.warning("⚠️ Nema pronađenih TXT fajlova u folderu 'novi_unos'.")
 
+# Nakon što je tabela kreirana, proveri kolone
+con = duckdb.connect(DB_PATH)
+cols_kola = [r[0] for r in con.execute("DESCRIBE kola").fetchall()]
+cols_novi = [r[0] for r in con.execute("DESCRIBE novi_unosi").fetchall()]
+con.close()
+
+st.write("📋 Kolone u 'kola':", cols_kola)
+st.write("📋 Kolone u 'novi_unosi':", cols_novi)
+
+diff1 = set(cols_kola) - set(cols_novi)
+diff2 = set(cols_novi) - set(cols_kola)
+st.warning(f"🔎 Kolone koje su u 'kola' a nema ih u 'novi_unosi': {diff1}")
+st.warning(f"🔎 Kolone koje su u 'novi_unosi' a nema ih u 'kola': {diff2}")
+
 st.write("📋 Kolone u df_all (novi_unosi):", df_all.columns)
+
 # =========================
 # Kreiranje view kola_sve
 # =========================
