@@ -224,7 +224,7 @@ for c, t in zip(new_cols, new_types):
 
 df_all = df_all.select(cols_to_add)
 
-    # Registruj i napravi tabelu
+# Registruj i napravi tabelu
     con = duckdb.connect(DB_PATH)
     con.register("df_novi", df_all.to_pandas())
     con.execute("CREATE OR REPLACE TABLE novi_unosi AS SELECT * FROM df_novi")
