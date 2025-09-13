@@ -24,18 +24,42 @@ NOVI_UNOS_FOLDER_ID = "1XQEUt3_TjM_lWahZHoZmlANExIwDwBW1"  # folder sa TXT fajlo
 # Merge delova u jednu bazu
 # =========================
 def merge_parts():
-    part_files = [f for f in os.listdir(".") if re.match(r"(Copy of )?kola_sk\.db\.part\d+$", f)]
-    part_files = sorted(part_files, key=lambda x: int(re.search(r"part(\d+)", x).group(1)))
+    # Pronađi sve part fajlove
+    part_files = []
+    for f in os.listdir("."):
+        m = re.match(r"(Copy of )?kola_sk\.db\.part(\d+)$", f)
+        if m:
+            part_files.append((int(m.group(2)), f))
 
-    if len(part_files) == 48:
-        with open(DB_PATH, "wb") as outfile:
-            for fname in part_files:
-                with open(fname, "rb") as infile:
-                    outfile.write(infile.read())
-        st.success(f"✅ Spojeno {len(part_files)} delova → {DB_PATH}")
-    else:
-        st.warning(f"❌ Nađeno {len(part_files)} fajlova, očekivano 48")
-        st.write("📂 Fajlovi koje sam našao:", part_files)
+    part_files.sort(key=lambda x: x[0])
+    found_numbers = [num for num, _ in part_files]
+
+    expected_numbers = list(range(1, 49))  # 1..48
+    missing_numbers = [num for num in expected_numbers if num not in found_numbers]
+
+    if missing_numbers:
+        st.warning(f"❌ Nedostaju delovi: {missing_numbers}. Pokušavam ponovo da pronađem...")
+        # Pokušaj ponovo da pronađeš fajlove
+        for num in missing_numbers:
+            fname = f"Copy of kola_sk.db.part{num}"
+            if os.path.exists(fname):
+                part_files.append((num, fname))
+        part_files.sort(key=lambda x: x[0])
+        # Provera ponovo
+        found_numbers = [num for num, _ in part_files]
+        missing_numbers = [num for num in expected_numbers if num not in found_numbers]
+
+    if missing_numbers:
+        st.error(f"❌ I dalje nedostaju delovi: {missing_numbers}. Merge nije moguć.")
+        return
+
+    # Merge delova
+    with open(DB_PATH, "wb") as outfile:
+        for _, fname in part_files:
+            with open(fname, "rb") as infile:
+                outfile.write(infile.read())
+
+    st.success(f"✅ Spojeno svih 48 delova → {DB_PATH}")
 
 # =========================
 # Preuzimanje delova baze (.part fajlovi)
