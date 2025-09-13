@@ -275,16 +275,15 @@ if os.path.exists(DB_PATH):
             st.warning("⚠️ Nema TXT fajlova u 'novi_unos' folderu")
 
     # kreiraj pogled kola_sve
-    con = duckdb.connect(DB_PATH)
-    con.execute("""
-        CREATE OR REPLACE VIEW kola_sve AS
-        SELECT * FROM kola
-        UNION ALL
-        SELECT * FROM novi_unosi
-    """)
-    con.close()
-    st.success("✅ 'kola_sve' je spreman (kola ∪ novi_unosi)")
-
+    def create_or_replace_table_from_df(db_path, table_name, df):
+    con = duckdb.connect(db_path)
+    try:
+        con.execute(f'DROP TABLE IF EXISTS "{table_name}"')
+        con.register("df_tmp", df.to_pandas())
+        con.execute(f'CREATE TABLE "{table_name}" AS SELECT * FROM df_tmp')
+        con.unregister("df_tmp")
+    finally:
+        con.close()
     # test
     try:
         df_test = run_sql(DB_PATH, "SELECT COUNT(*) AS broj_redova FROM kola_sve")
