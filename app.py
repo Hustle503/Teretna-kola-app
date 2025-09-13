@@ -105,7 +105,7 @@ def parse_txt(path) -> pd.DataFrame:
                 "NetoTone": line[83:86].strip(),
                 "Broj vagona": line[0:12].strip(),
                 "Broj kola": line[1:11].strip(),
-                "Broj kola bez rezima i kb": line[2:11].strip(),
+                "broj_kola_bez_rezima_i_kb"": line[2:11].strip(),
                 "source_file": os.path.basename(path),
             })
     return pd.DataFrame(rows)
