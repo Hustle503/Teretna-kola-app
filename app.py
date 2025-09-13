@@ -12,13 +12,6 @@ from pydrive2.auth import GoogleAuth
 from pydrive2.drive import GoogleDrive
 import polars as pl
 
-import os
-import re
-import polars as pl
-import duckdb
-import streamlit as st
-import gdown
-
 # =========================
 # Putevi i folderi
 # =========================
@@ -31,7 +24,6 @@ NOVI_UNOS_FOLDER_ID = "1XQEUt3_TjM_lWahZHoZmlANExIwDwBW1"  # folder sa TXT fajlo
 # Merge delova u jednu bazu
 # =========================
 def merge_parts():
-    # Pronađi sve part fajlove
     part_files = []
     for f in os.listdir("."):
         m = re.match(r"(Copy of )?kola_sk\.db\.part(\d+)$", f)
@@ -66,7 +58,7 @@ def merge_parts():
     st.success(f"✅ Spojeno svih 48 delova → {DB_PATH}")
 
 # =========================
-# Preuzimanje delova baze (.part fajlovi)
+# Preuzimanje delova baze
 # =========================
 folder_url_parts = f"https://drive.google.com/drive/folders/{FOLDER_ID}?usp=sharing"
 st.info(f"⬇️ Preuzimam part fajlove iz foldera: {folder_url_parts}")
@@ -162,60 +154,33 @@ except Exception as e:
     st.warning(f"⚠️ Greška pri preuzimanju TXT fajlova: {e}. Ako su fajlovi već skinuti, nastavljam...")
 
 txt_files = [os.path.join(NOVI_UNOS_FOLDER, f) for f in os.listdir(NOVI_UNOS_FOLDER) if f.endswith(".txt")]
-df_all = pl.DataFrame()  # garantuje da postoji i kad nema fajlova
 
-# =========================
-# Sinkronizacija kolona i tipova sa tabelom 'kola'
-# =========================
-con = duckdb.connect(DB_PATH)
-kola_info = con.execute("PRAGMA table_info('kola')").fetchdf()
-con.close()
-
-new_cols = kola_info["name"].tolist()
-new_types = kola_info["type"].tolist()
-
-cols_to_add = []
-
+df_all = pl.DataFrame()
 if txt_files:
     dfs = [parse_txt(f) for f in txt_files]
     df_all = pl.concat(dfs)
 
-    # Dodaj nedostajuće kolone
-    missing_cols = set(new_cols) - set(df_all.columns)
+    # Dodaj nedostajuće kolone iz tabele kola
+    con = duckdb.connect(DB_PATH)
+    df_kola_sample = con.execute("SELECT * FROM kola LIMIT 5").fetchdf()
+    con.close()
+
+    missing_cols = set(df_kola_sample.columns) - set(df_all.columns)
     for c in missing_cols:
         if c == "DatumVreme":
-            df_all = df_all.with_columns((pl.col("Datum") + " " + pl.col("Vreme")).str.strptime(pl.Datetime, "%Y%m%d %H%M").alias("DatumVreme"))
+            df_all = df_all.with_columns(
+                (pl.col("Datum") + " " + pl.col("Vreme"))
+                .str.strptime(pl.Datetime, "%Y%m%d %H%M", strict=False)
+                .alias("DatumVreme")
+            )
         elif c == "Datum_validan":
-            df_all = df_all.with_columns(pl.col("Datum").str.strptime(pl.Date, "%Y%m%d").is_not_null().alias("Datum_validan"))
+            df_all = df_all.with_columns(
+                pl.col("Datum").str.strptime(pl.Date, "%Y%m%d", strict=False).is_not_null().alias("Datum_validan")
+            )
         else:
             df_all = df_all.with_columns(pl.lit(None).alias(c))
 
-    # Prilagodi tipove i redosled
-    for c, t in zip(new_cols, new_types):
-        if c in df_all.columns:
-            if t.upper() in ["INTEGER", "INT", "BIGINT"]:
-                cols_to_add.append(pl.col(c).cast(pl.Int64, strict=False).alias(c))
-            elif t.upper() in ["DOUBLE", "FLOAT", "DECIMAL"]:
-                cols_to_add.append(pl.col(c).cast(pl.Float64, strict=False).alias(c))
-            elif t.upper() in ["DATE"]:
-                cols_to_add.append(pl.col(c).str.strptime(pl.Date, "%Y%m%d", strict=False).alias(c))
-            elif t.upper() in ["TIMESTAMP", "DATETIME"]:
-                cols_to_add.append(pl.col(c).cast(pl.Datetime, strict=False).alias(c))
-            else:
-                cols_to_add.append(pl.col(c).cast(pl.Utf8, strict=False).alias(c))
-        else:
-            # Kolona ne postoji, dodaj None sa odgovarajućim tipom
-            if t.upper() in ["INTEGER", "INT", "BIGINT"]:
-                cols_to_add.append(pl.lit(None).cast(pl.Int64).alias(c))
-            elif t.upper() in ["DOUBLE", "FLOAT", "DECIMAL"]:
-                cols_to_add.append(pl.lit(None).cast(pl.Float64).alias(c))
-            elif t.upper() in ["DATE"]:
-                cols_to_add.append(pl.lit(None).cast(pl.Date).alias(c))
-            elif t.upper() in ["TIMESTAMP", "DATETIME"]:
-                cols_to_add.append(pl.lit(None).cast(pl.Datetime).alias(c))
-            else:
-                cols_to_add.append(pl.lit(None).cast(pl.Utf8).alias(c))
-
+    cols_to_add = df_kola_sample.columns
     df_all = df_all.select(cols_to_add)
 
     # Registruj i napravi tabelu
@@ -227,45 +192,68 @@ if txt_files:
     st.success(f"✅ Učitan {len(df_all)} redova iz {len(txt_files)} TXT fajlova u tabelu 'novi_unosi'")
 
 else:
-    # Ako nema fajlova napravi praznu tabelu
     con = duckdb.connect(DB_PATH)
     con.execute("CREATE OR REPLACE TABLE novi_unosi AS SELECT * FROM kola WHERE FALSE")
     con.close()
     st.warning("⚠️ Nema pronađenih TXT fajlova u folderu 'novi_unos'.")
 
 # =========================
-# Provera kolona
-# =========================
-con = duckdb.connect(DB_PATH)
-cols_kola = [r[0] for r in con.execute("DESCRIBE kola").fetchall()]
-cols_novi = [r[0] for r in con.execute("DESCRIBE novi_unosi").fetchall()]
-con.close()
-
-st.write("📋 Kolone u 'kola':", cols_kola)
-st.write("📋 Kolone u 'novi_unosi':", cols_novi)
-
-diff1 = set(cols_kola) - set(cols_novi)
-diff2 = set(cols_novi) - set(cols_kola)
-st.warning(f"🔎 Kolone koje su u 'kola' a nema ih u 'novi_unosi': {diff1}")
-st.warning(f"🔎 Kolone koje su u 'novi_unosi' a nema ih u 'kola': {diff2}")
-
-st.write("📋 Kolone u df_all (novi_unosi):", df_all.columns)
-
-# =========================
-# Kreiranje view kola_sve
+# Kreiranje view kola_sve (sa eksplicitnim tipovima)
 # =========================
 if os.path.exists(DB_PATH):
     con = duckdb.connect(DB_PATH)
     con.execute("""
-        CREATE OR REPLACE VIEW kola_sve AS
-        SELECT * FROM kola
-        UNION ALL
-        SELECT * FROM novi_unosi
+    CREATE OR REPLACE VIEW kola_sve AS
+    SELECT
+        Režim::VARCHAR,
+        Vlasnik::VARCHAR,
+        Serija::VARCHAR,
+        "Inv br"::INTEGER,
+        KB::VARCHAR,
+        "Tip kola"::VARCHAR,
+        "Voz br"::VARCHAR,
+        Stanica::VARCHAR,
+        Status::VARCHAR,
+        Datum::VARCHAR,
+        Vreme::VARCHAR,
+        Roba::VARCHAR,
+        Reon::VARCHAR,
+        tara::INTEGER,
+        NetoTone::INTEGER,
+        "Broj vagona"::VARCHAR,
+        "Broj kola"::VARCHAR,
+        source_file::VARCHAR,
+        DatumVreme::TIMESTAMP,
+        Datum_validan::BOOLEAN,
+        broj_kola_bez_rezima_i_kb::VARCHAR
+    FROM kola
+    UNION ALL
+    SELECT
+        Režim::VARCHAR,
+        Vlasnik::VARCHAR,
+        Serija::VARCHAR,
+        "Inv br"::INTEGER,
+        KB::VARCHAR,
+        "Tip kola"::VARCHAR,
+        "Voz br"::VARCHAR,
+        Stanica::VARCHAR,
+        Status::VARCHAR,
+        Datum::VARCHAR,
+        Vreme::VARCHAR,
+        Roba::VARCHAR,
+        Reon::VARCHAR,
+        tara::INTEGER,
+        NetoTone::INTEGER,
+        "Broj vagona"::VARCHAR,
+        "Broj kola"::VARCHAR,
+        source_file::VARCHAR,
+        DatumVreme::TIMESTAMP,
+        Datum_validan::BOOLEAN,
+        broj_kola_bez_rezima_i_kb::VARCHAR
+    FROM novi_unosi
     """)
     con.close()
     st.success("✅ View 'kola_sve' je spreman za upotrebu")
-
-
 
 # =========================
 # Funkcije za rad sa bazom
