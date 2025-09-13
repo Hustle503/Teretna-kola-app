@@ -12,12 +12,6 @@ from pydrive2.auth import GoogleAuth
 from pydrive2.drive import GoogleDrive
 import polars as pl
 
-import os
-import re
-import polars as pl
-import duckdb
-import streamlit as st
-import gdown
 
 # =========================
 # Putevi i folderi
