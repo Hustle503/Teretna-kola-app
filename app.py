@@ -255,6 +255,7 @@ if os.path.exists(DB_PATH):
     con.close()
     st.success("✅ View 'kola_sve' je spreman za upotrebu")
 
+
 # =========================
 # Funkcije za rad sa bazom
 # =========================
