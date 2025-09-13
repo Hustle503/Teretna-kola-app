@@ -12,6 +12,13 @@ from pydrive2.auth import GoogleAuth
 from pydrive2.drive import GoogleDrive
 import polars as pl
 
+import os
+import re
+import polars as pl
+import duckdb
+import streamlit as st
+import gdown
+
 # =========================
 # Putevi i folderi
 # =========================
@@ -39,13 +46,11 @@ def merge_parts():
 
     if missing_numbers:
         st.warning(f"❌ Nedostaju delovi: {missing_numbers}. Pokušavam ponovo da pronađem...")
-        # Pokušaj ponovo da pronađeš fajlove
         for num in missing_numbers:
             fname = f"Copy of kola_sk.db.part{num}"
             if os.path.exists(fname):
                 part_files.append((num, fname))
         part_files.sort(key=lambda x: x[0])
-        # Provera ponovo
         found_numbers = [num for num, _ in part_files]
         missing_numbers = [num for num in expected_numbers if num not in found_numbers]
 
@@ -53,7 +58,6 @@ def merge_parts():
         st.error(f"❌ I dalje nedostaju delovi: {missing_numbers}. Merge nije moguć.")
         return
 
-    # Merge delova
     with open(DB_PATH, "wb") as outfile:
         for _, fname in part_files:
             with open(fname, "rb") as infile:
@@ -130,7 +134,6 @@ def parse_txt(path) -> pl.DataFrame:
           .alias("Datum"),
     ])
 
-    # Kombinovana kolona DatumVreme i flag Datum_validan
     df = df.with_columns([
         (pl.col("Datum") + " " + pl.col("Vreme"))
             .str.strptime(pl.Datetime, "%Y%m%d %H%M", strict=False)
@@ -138,7 +141,6 @@ def parse_txt(path) -> pl.DataFrame:
         pl.col("Datum").str.strptime(pl.Date, "%Y%m%d", strict=False).is_not_null().alias("Datum_validan")
     ])
 
-    # Brojevi u int
     df = df.with_columns([
         pl.col("tara").cast(pl.Int32, strict=False),
         pl.col("NetoTone").cast(pl.Int32, strict=False),
@@ -160,41 +162,69 @@ except Exception as e:
     st.warning(f"⚠️ Greška pri preuzimanju TXT fajlova: {e}. Ako su fajlovi već skinuti, nastavljam...")
 
 txt_files = [os.path.join(NOVI_UNOS_FOLDER, f) for f in os.listdir(NOVI_UNOS_FOLDER) if f.endswith(".txt")]
-
 df_all = pl.DataFrame()  # garantuje da postoji i kad nema fajlova
+
+# =========================
+# Sinkronizacija kolona i tipova sa tabelom 'kola'
+# =========================
+con = duckdb.connect(DB_PATH)
+kola_info = con.execute("PRAGMA table_info('kola')").fetchdf()
+con.close()
+
+new_cols = kola_info["name"].tolist()
+new_types = kola_info["type"].tolist()
+
+cols_to_add = []
 
 if txt_files:
     dfs = [parse_txt(f) for f in txt_files]
     df_all = pl.concat(dfs)
 
-    # Dodaj nedostajuće kolone iz tabele kola
-    con = duckdb.connect(DB_PATH)
-    df_kola_sample = con.execute("SELECT * FROM kola LIMIT 5").fetchdf()
-    con.close()
-
-    missing_cols = set(df_kola_sample.columns) - set(df_all.columns)
+    # Dodaj nedostajuće kolone
+    missing_cols = set(new_cols) - set(df_all.columns)
     for c in missing_cols:
         if c == "DatumVreme":
-            df_all = df_all.with_columns(
-                (pl.col("Datum") + " " + pl.col("Vreme"))
-                .str.strptime(pl.Datetime, "%Y%m%d %H%M", strict=False)
-                .alias("DatumVreme")
-            )
+            df_all = df_all.with_columns((pl.col("Datum") + " " + pl.col("Vreme")).str.strptime(pl.Datetime, "%Y%m%d %H%M").alias("DatumVreme"))
         elif c == "Datum_validan":
-            df_all = df_all.with_columns(
-                pl.col("Datum").str.strptime(pl.Date, "%Y%m%d", strict=False).is_not_null().alias("Datum_validan")
-            )
+            df_all = df_all.with_columns(pl.col("Datum").str.strptime(pl.Date, "%Y%m%d").is_not_null().alias("Datum_validan"))
         else:
             df_all = df_all.with_columns(pl.lit(None).alias(c))
-df_all = df_all.select(cols_to_add)
 
-# Registruj i napravi tabelu
-con = duckdb.connect(DB_PATH)
-con.register("df_novi", df_all.to_pandas())
-con.execute("CREATE OR REPLACE TABLE novi_unosi AS SELECT * FROM df_novi")
-con.unregister("df_novi")
-con.close()
-st.success(f"✅ Učitan {len(df_all)} redova iz {len(txt_files)} TXT fajlova u tabelu 'novi_unosi'")
+    # Prilagodi tipove i redosled
+    for c, t in zip(new_cols, new_types):
+        if c in df_all.columns:
+            if t.upper() in ["INTEGER", "INT", "BIGINT"]:
+                cols_to_add.append(pl.col(c).cast(pl.Int64, strict=False).alias(c))
+            elif t.upper() in ["DOUBLE", "FLOAT", "DECIMAL"]:
+                cols_to_add.append(pl.col(c).cast(pl.Float64, strict=False).alias(c))
+            elif t.upper() in ["DATE"]:
+                cols_to_add.append(pl.col(c).str.strptime(pl.Date, "%Y%m%d", strict=False).alias(c))
+            elif t.upper() in ["TIMESTAMP", "DATETIME"]:
+                cols_to_add.append(pl.col(c).cast(pl.Datetime, strict=False).alias(c))
+            else:
+                cols_to_add.append(pl.col(c).cast(pl.Utf8, strict=False).alias(c))
+        else:
+            # Kolona ne postoji, dodaj None sa odgovarajućim tipom
+            if t.upper() in ["INTEGER", "INT", "BIGINT"]:
+                cols_to_add.append(pl.lit(None).cast(pl.Int64).alias(c))
+            elif t.upper() in ["DOUBLE", "FLOAT", "DECIMAL"]:
+                cols_to_add.append(pl.lit(None).cast(pl.Float64).alias(c))
+            elif t.upper() in ["DATE"]:
+                cols_to_add.append(pl.lit(None).cast(pl.Date).alias(c))
+            elif t.upper() in ["TIMESTAMP", "DATETIME"]:
+                cols_to_add.append(pl.lit(None).cast(pl.Datetime).alias(c))
+            else:
+                cols_to_add.append(pl.lit(None).cast(pl.Utf8).alias(c))
+
+    df_all = df_all.select(cols_to_add)
+
+    # Registruj i napravi tabelu
+    con = duckdb.connect(DB_PATH)
+    con.register("df_novi", df_all.to_pandas())
+    con.execute("CREATE OR REPLACE TABLE novi_unosi AS SELECT * FROM df_novi")
+    con.unregister("df_novi")
+    con.close()
+    st.success(f"✅ Učitan {len(df_all)} redova iz {len(txt_files)} TXT fajlova u tabelu 'novi_unosi'")
 
 else:
     # Ako nema fajlova napravi praznu tabelu
@@ -203,7 +233,9 @@ else:
     con.close()
     st.warning("⚠️ Nema pronađenih TXT fajlova u folderu 'novi_unos'.")
 
-# Nakon što je tabela kreirana, proveri kolone
+# =========================
+# Provera kolona
+# =========================
 con = duckdb.connect(DB_PATH)
 cols_kola = [r[0] for r in con.execute("DESCRIBE kola").fetchall()]
 cols_novi = [r[0] for r in con.execute("DESCRIBE novi_unosi").fetchall()]
@@ -232,6 +264,7 @@ if os.path.exists(DB_PATH):
     """)
     con.close()
     st.success("✅ View 'kola_sve' je spreman za upotrebu")
+
 
 
 # =========================
