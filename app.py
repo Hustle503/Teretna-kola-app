@@ -17,7 +17,7 @@ import polars as pl
 # =========================
 DB_PATH = "kola_sk.db"
 FOLDER_ID = "1q__8P3gY-JMzqD5cpt8avm_7VAY-fHWI"  # folder sa part fajlovima
-NOVI_UNOS_FOLDER = "novi_unos"
+NOVI_UNOS_FOLDER = "novi unos"
 NOVI_UNOS_FOLDER_ID = "1XQEUt3_TjM_lWahZHoZmlANExIwDwBW1"  # folder sa TXT fajlovima
 
 # =========================
