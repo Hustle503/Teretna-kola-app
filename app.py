@@ -24,6 +24,29 @@ NOVI_UNOS_FOLDER = "novi_unos"   # lokalni folder gde dodaješ txt fajlove
 NOVI_UNOS_FOLDER_ID = "1XQEUt3_TjM_lWahZHoZmlANExIwDwBW1"  # Google Drive ID za "novi unos"
 
 # =========================
+# Merge delova u jednu bazu
+# =========================
+def merge_parts():
+    part_files = sorted(glob.glob("*.part*"), key=lambda x: int(re.search(r"part(\d+)", x).group(1)))
+    st.write("📂 Nađeno delova:", part_files, len(part_files))
+    part_files = []
+    for f in os.listdir("."):
+        if re.match(r"(Copy of )?kola_sk\.db\.part\d+$", f):
+            part_files.append(f)
+
+    part_files = sorted(part_files, key=lambda x: int(re.search(r"part(\d+)", x).group(1)))
+
+    if len(part_files) == 48:
+        with open(DB_PATH, "wb") as outfile:
+            for fname in part_files:
+                with open(fname, "rb") as infile:
+                    outfile.write(infile.read())
+        print(f"✅ Spojeno {len(part_files)} delova → {DB_PATH}")
+    else:
+        print(f"❌ Nađeno {len(part_files)} fajlova, očekivano 48")
+        print("📂 Fajlovi koje sam našao:", part_files)
+
+# =========================
 # Preuzimanje delova baze (.part fajlovi)
 # =========================
 folder_url_parts = f"https://drive.google.com/drive/folders/{FOLDER_ID}?usp=sharing"
@@ -83,27 +106,6 @@ def download_folder(folder_id: str, dest: str):
     url = f"https://drive.google.com/drive/folders/{folder_id}"
     gdown.download_folder(url, output=dest, quiet=False, use_cookies=False)
    
-
-# =========================
-# Merge delova u jednu bazu
-# =========================
-def merge_parts():
-    part_files = []
-    for f in os.listdir("."):
-        if re.match(r"(Copy of )?kola_sk\.db\.part\d+$", f):
-            part_files.append(f)
-
-    part_files = sorted(part_files, key=lambda x: int(re.search(r"part(\d+)", x).group(1)))
-
-    if len(part_files) == 48:
-        with open(DB_PATH, "wb") as outfile:
-            for fname in part_files:
-                with open(fname, "rb") as infile:
-                    outfile.write(infile.read())
-        print(f"✅ Spojeno {len(part_files)} delova → {DB_PATH}")
-    else:
-        print(f"❌ Nađeno {len(part_files)} fajlova, očekivano 48")
-        print("📂 Fajlovi koje sam našao:", part_files)
 # =========================
 # Učitavanje novih TXT fajlova u tabelu novi_unosi
 # =========================
