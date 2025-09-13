@@ -187,7 +187,7 @@ if txt_files:
         else:
             df_all = df_all.with_columns(pl.lit(None).alias(c))
 
-    st.write("📋 Kolone u df_all (novi_unosi):", df_all.columns.tolist())
+        st.write("📋 Kolone u df_all (novi_unosi):", df_all.columns.tolist())
 
     # Registracija u DuckDB i kreiranje tabele novi_unosi
     con = duckdb.connect(DB_PATH)
