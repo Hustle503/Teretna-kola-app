@@ -12,6 +12,13 @@ from pydrive2.auth import GoogleAuth
 from pydrive2.drive import GoogleDrive
 import polars as pl
 
+import os
+import re
+import polars as pl
+import duckdb
+import streamlit as st
+import gdown
+
 # =========================
 # Putevi i folderi
 # =========================
@@ -32,8 +39,7 @@ def merge_parts():
 
     part_files.sort(key=lambda x: x[0])
     found_numbers = [num for num, _ in part_files]
-
-    expected_numbers = list(range(1, 49))  # 1..48
+    expected_numbers = list(range(1, 49))
     missing_numbers = [num for num in expected_numbers if num not in found_numbers]
 
     if missing_numbers:
@@ -69,16 +75,10 @@ except Exception as e:
 
 merge_parts()
 
-if os.path.exists(DB_PATH):
-    st.success(f"✅ Spojena baza je napravljena: {DB_PATH}")
-else:
+if not os.path.exists(DB_PATH):
     st.error("❌ Baza nije napravljena! Proveri da li imaš svih 48 .part fajlova.")
-
-# Provera tabela u bazi
-con = duckdb.connect(DB_PATH)
-tables = con.execute("SHOW TABLES").fetchall()
-st.write("📋 Tabele u bazi:", tables)
-con.close()
+else:
+    st.success(f"✅ Spojena baza je napravljena: {DB_PATH}")
 
 # =========================
 # Funkcija za parsiranje TXT fajlova
@@ -112,37 +112,32 @@ def parse_txt(path) -> pl.DataFrame:
 
     # Ispravka vremena 2400 → 0000 i pomeranje datuma
     df = df.with_columns([
-        pl.when(pl.col("Vreme") == "2400")
-          .then(pl.lit("0000"))
-          .otherwise(pl.col("Vreme"))
-          .alias("Vreme"),
-
-        pl.when(pl.col("Vreme") == "2400")
-          .then(
-              (pl.col("Datum").str.strptime(pl.Date, "%Y%m%d", strict=False) + pl.duration(days=1))
-              .dt.strftime("%Y%m%d")
-          )
-          .otherwise(pl.col("Datum"))
-          .alias("Datum"),
+        pl.when(pl.col("Vreme") == "2400").then(pl.lit("0000")).otherwise(pl.col("Vreme")).alias("Vreme"),
+        pl.when(pl.col("Vreme") == "0000").then(
+            (pl.col("Datum").str.strptime(pl.Date, "%Y%m%d", strict=False) + pl.duration(days=1)).dt.strftime("%Y%m%d")
+        ).otherwise(pl.col("Datum")).alias("Datum"),
     ])
 
+    # DatumVreme i Datum_validan
     df = df.with_columns([
-        (pl.col("Datum") + " " + pl.col("Vreme"))
-            .str.strptime(pl.Datetime, "%Y%m%d %H%M", strict=False)
-            .alias("DatumVreme"),
+        (pl.col("Datum") + " " + pl.col("Vreme")).str.strptime(pl.Datetime, "%Y%m%d %H%M", strict=False).alias("DatumVreme"),
         pl.col("Datum").str.strptime(pl.Date, "%Y%m%d", strict=False).is_not_null().alias("Datum_validan")
     ])
 
+    # Brojevi u int
     df = df.with_columns([
         pl.col("tara").cast(pl.Int32, strict=False),
         pl.col("NetoTone").cast(pl.Int32, strict=False),
         pl.col("Inv br").cast(pl.Int32, strict=False),
     ])
 
+    # Kolona koja je bila problematična
+    df = df.with_columns([pl.lit(None).alias("broj_kola_bez_rezima_i_kb")])
+
     return df
 
 # =========================
-# Preuzimanje i obrada TXT fajlova
+# Preuzimanje TXT fajlova
 # =========================
 os.makedirs(NOVI_UNOS_FOLDER, exist_ok=True)
 folder_url = f"https://drive.google.com/drive/folders/{NOVI_UNOS_FOLDER_ID}"
@@ -156,34 +151,35 @@ except Exception as e:
 txt_files = [os.path.join(NOVI_UNOS_FOLDER, f) for f in os.listdir(NOVI_UNOS_FOLDER) if f.endswith(".txt")]
 
 df_all = pl.DataFrame()
+
 if txt_files:
     dfs = [parse_txt(f) for f in txt_files]
     df_all = pl.concat(dfs)
 
-    # Dodaj nedostajuće kolone iz tabele kola
+    # Sinkronizacija kolona sa tabelom kola
     con = duckdb.connect(DB_PATH)
-    df_kola_sample = con.execute("SELECT * FROM kola LIMIT 5").fetchdf()
+    kola_info = con.execute("PRAGMA table_info('kola')").fetchdf()
     con.close()
 
-    missing_cols = set(df_kola_sample.columns) - set(df_all.columns)
-    for c in missing_cols:
-        if c == "DatumVreme":
-            df_all = df_all.with_columns(
-                (pl.col("Datum") + " " + pl.col("Vreme"))
-                .str.strptime(pl.Datetime, "%Y%m%d %H%M", strict=False)
-                .alias("DatumVreme")
-            )
-        elif c == "Datum_validan":
-            df_all = df_all.with_columns(
-                pl.col("Datum").str.strptime(pl.Date, "%Y%m%d", strict=False).is_not_null().alias("Datum_validan")
-            )
-        else:
+    cols = kola_info["name"].tolist()
+    types = kola_info["type"].tolist()
+
+    # Dodaj nedostajuće kolone
+    for c in cols:
+        if c not in df_all.columns:
             df_all = df_all.with_columns(pl.lit(None).alias(c))
 
-    cols_to_add = df_kola_sample.columns
-    df_all = df_all.select(cols_to_add)
+    # Redosled kolona i konverzija tipova
+    df_all = df_all.select(cols)
+    for c, t in zip(cols, types):
+        if t.upper() in ["INTEGER", "INT", "BIGINT"]:
+            df_all = df_all.with_columns(pl.col(c).cast(pl.Int64, strict=False))
+        elif t.upper() in ["DOUBLE", "FLOAT", "DECIMAL"]:
+            df_all = df_all.with_columns(pl.col(c).cast(pl.Float64, strict=False))
+        else:
+            df_all = df_all.with_columns(pl.col(c).cast(pl.Utf8, strict=False))
 
-    # Registruj i napravi tabelu
+    # Registracija i kreiranje tabele
     con = duckdb.connect(DB_PATH)
     con.register("df_novi", df_all.to_pandas())
     con.execute("CREATE OR REPLACE TABLE novi_unosi AS SELECT * FROM df_novi")
@@ -198,62 +194,18 @@ else:
     st.warning("⚠️ Nema pronađenih TXT fajlova u folderu 'novi_unos'.")
 
 # =========================
-# Kreiranje view kola_sve (sa eksplicitnim tipovima)
+# Kreiranje view kola_sve
 # =========================
-if os.path.exists(DB_PATH):
-    con = duckdb.connect(DB_PATH)
-    con.execute("""
+con = duckdb.connect(DB_PATH)
+con.execute("""
     CREATE OR REPLACE VIEW kola_sve AS
-    SELECT
-        Režim::VARCHAR,
-        Vlasnik::VARCHAR,
-        Serija::VARCHAR,
-        "Inv br"::INTEGER,
-        KB::VARCHAR,
-        "Tip kola"::VARCHAR,
-        "Voz br"::VARCHAR,
-        Stanica::VARCHAR,
-        Status::VARCHAR,
-        Datum::VARCHAR,
-        Vreme::VARCHAR,
-        Roba::VARCHAR,
-        Reon::VARCHAR,
-        tara::INTEGER,
-        NetoTone::INTEGER,
-        "Broj vagona"::VARCHAR,
-        "Broj kola"::VARCHAR,
-        source_file::VARCHAR,
-        DatumVreme::TIMESTAMP,
-        Datum_validan::BOOLEAN,
-        broj_kola_bez_rezima_i_kb::VARCHAR
-    FROM kola
+    SELECT * FROM kola
     UNION ALL
-    SELECT
-        Režim::VARCHAR,
-        Vlasnik::VARCHAR,
-        Serija::VARCHAR,
-        "Inv br"::INTEGER,
-        KB::VARCHAR,
-        "Tip kola"::VARCHAR,
-        "Voz br"::VARCHAR,
-        Stanica::VARCHAR,
-        Status::VARCHAR,
-        Datum::VARCHAR,
-        Vreme::VARCHAR,
-        Roba::VARCHAR,
-        Reon::VARCHAR,
-        tara::INTEGER,
-        NetoTone::INTEGER,
-        "Broj vagona"::VARCHAR,
-        "Broj kola"::VARCHAR,
-        source_file::VARCHAR,
-        DatumVreme::TIMESTAMP,
-        Datum_validan::BOOLEAN,
-        broj_kola_bez_rezima_i_kb::VARCHAR
-    FROM novi_unosi
-    """)
-    con.close()
-    st.success("✅ View 'kola_sve' je spreman za upotrebu")
+    SELECT * FROM novi_unosi
+""")
+con.close()
+st.success("✅ View 'kola_sve' je spreman za upotrebu")
+
 
 
 # =========================
