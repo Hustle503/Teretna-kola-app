@@ -16,21 +16,16 @@ import polars as pl
 # Putevi i folderi
 # =========================
 DB_PATH = "kola_sk.db"
-FOLDER_ID = "1q__8P3gY-JMzqD5cpt8avm_7VAY-fHWI"  # folder sa 48 part fajlova
+FOLDER_ID = "1q__8P3gY-JMzqD5cpt8avm_7VAY-fHWI"  # folder sa part fajlovima
 NOVI_UNOS_FOLDER = "novi_unos"
 NOVI_UNOS_FOLDER_ID = "1XQEUt3_TjM_lWahZHoZmlANExIwDwBW1"  # folder sa TXT fajlovima
 
 # =========================
-# Funkcija za merge .part fajlova
+# Merge delova u jednu bazu
 # =========================
 def merge_parts():
-    part_files = []
-    for f in os.listdir("."):
-        if re.match(r"(Copy of )?kola_sk\.db\.part\d+$", f):
-            part_files.append(f)
-
+    part_files = [f for f in os.listdir(".") if re.match(r"(Copy of )?kola_sk\.db\.part\d+$", f)]
     part_files = sorted(part_files, key=lambda x: int(re.search(r"part(\d+)", x).group(1)))
-    st.write("📂 Nađeno delova:", part_files, len(part_files))
 
     if len(part_files) == 48:
         with open(DB_PATH, "wb") as outfile:
@@ -39,51 +34,36 @@ def merge_parts():
                     outfile.write(infile.read())
         st.success(f"✅ Spojeno {len(part_files)} delova → {DB_PATH}")
     else:
-        st.error(f"❌ Nađeno {len(part_files)} fajlova, očekivano 48")
+        st.warning(f"❌ Nađeno {len(part_files)} fajlova, očekivano 48")
         st.write("📂 Fajlovi koje sam našao:", part_files)
 
 # =========================
-# Preuzimanje .part fajlova
+# Preuzimanje delova baze (.part fajlovi)
 # =========================
 folder_url_parts = f"https://drive.google.com/drive/folders/{FOLDER_ID}?usp=sharing"
 st.info(f"⬇️ Preuzimam part fajlove iz foldera: {folder_url_parts}")
 try:
     gdown.download_folder(url=folder_url_parts, output=".", quiet=False, use_cookies=False)
-    st.success("✅ Svi .part fajlovi preuzeti")
 except Exception as e:
     st.warning(f"⚠️ Greška pri preuzimanju part fajlova: {e}. Ako su fajlovi već skinuti, pokušavam merge...")
 
-# UVEK pokušaj merge
 merge_parts()
 
-# =========================
-# Provera baza i tabela
-# =========================
 if os.path.exists(DB_PATH):
     st.success(f"✅ Spojena baza je napravljena: {DB_PATH}")
-    con = duckdb.connect(DB_PATH)
-    tables = con.execute("SHOW TABLES").fetchall()
-    st.write("📋 Tabele u bazi nakon spajanja partova:", tables)
-    con.close()
 else:
     st.error("❌ Baza nije napravljena! Proveri da li imaš svih 48 .part fajlova.")
 
-# =========================
-# Preuzimanje TXT fajlova
-# =========================
-os.makedirs(NOVI_UNOS_FOLDER, exist_ok=True)
-folder_url_txt = f"https://drive.google.com/drive/folders/{NOVI_UNOS_FOLDER_ID}?usp=sharing"
-st.info(f"⬇️ Preuzimam TXT fajlove iz foldera: {folder_url_txt}")
-try:
-    gdown.download_folder(url=folder_url_txt, output=NOVI_UNOS_FOLDER, quiet=False, use_cookies=False)
-    st.success("✅ TXT fajlovi preuzeti")
-except Exception as e:
-    st.warning(f"⚠️ Greška pri preuzimanju TXT fajlova: {e}. Ako su fajlovi već skinuti, nastavljam...")
+# Provera tabela u bazi
+con = duckdb.connect(DB_PATH)
+tables = con.execute("SHOW TABLES").fetchall()
+st.write("📋 Tabele u bazi:", tables)
+con.close()
 
 # =========================
 # Funkcija za parsiranje TXT fajlova
 # =========================
-def parse_txt(path) -> pd.DataFrame:
+def parse_txt(path) -> pl.DataFrame:
     rows = []
     with open(path, "r", encoding="utf-8", errors="ignore") as f:
         for line in f:
@@ -105,52 +85,101 @@ def parse_txt(path) -> pd.DataFrame:
                 "NetoTone": line[83:86].strip(),
                 "Broj vagona": line[0:12].strip(),
                 "Broj kola": line[1:11].strip(),
-                "broj_kola_bez_rezima_i_kb": line[2:11].strip(),
                 "source_file": os.path.basename(path),
             })
-    return pd.DataFrame(rows)
+
+    df = pl.DataFrame(rows)
+
+    # Ispravka vremena 2400 → 0000 i pomeranje datuma
+    df = df.with_columns([
+        pl.when(pl.col("Vreme") == "2400")
+          .then(pl.lit("0000"))
+          .otherwise(pl.col("Vreme"))
+          .alias("Vreme"),
+
+        pl.when(pl.col("Vreme") == "2400")
+          .then(
+              (pl.col("Datum").str.strptime(pl.Date, "%Y%m%d", strict=False) + pl.duration(days=1))
+              .dt.strftime("%Y%m%d")
+          )
+          .otherwise(pl.col("Datum"))
+          .alias("Datum"),
+    ])
+
+    # Kombinovana kolona DatumVreme i flag Datum_validan
+    df = df.with_columns([
+        (pl.col("Datum") + " " + pl.col("Vreme"))
+            .str.strptime(pl.Datetime, "%Y%m%d %H%M", strict=False)
+            .alias("DatumVreme"),
+        pl.col("Datum").str.strptime(pl.Date, "%Y%m%d", strict=False).is_not_null().alias("Datum_validan")
+    ])
+
+    # Brojevi u int
+    df = df.with_columns([
+        pl.col("tara").cast(pl.Int32, strict=False),
+        pl.col("NetoTone").cast(pl.Int32, strict=False),
+        pl.col("Inv br").cast(pl.Int32, strict=False),
+    ])
+
+    return df
 
 # =========================
-# Učitavanje TXT fajlova
+# Preuzimanje i obrada TXT fajlova
 # =========================
+os.makedirs(NOVI_UNOS_FOLDER, exist_ok=True)
+folder_url = f"https://drive.google.com/drive/folders/{NOVI_UNOS_FOLDER_ID}?usp=sharing"
+st.info(f"⬇️ Preuzimam TXT fajlove iz foldera: {folder_url}")
+try:
+    gdown.download_folder(url=folder_url, output=NOVI_UNOS_FOLDER, quiet=False, use_cookies=False)
+    st.success("✅ TXT fajlovi preuzeti")
+except Exception as e:
+    st.warning(f"⚠️ Greška pri preuzimanju TXT fajlova: {e}. Ako su fajlovi već skinuti, nastavljam...")
+
 txt_files = [os.path.join(NOVI_UNOS_FOLDER, f) for f in os.listdir(NOVI_UNOS_FOLDER) if f.endswith(".txt")]
 
 if txt_files:
     dfs = [parse_txt(f) for f in txt_files]
-    df_all = pd.concat(dfs, ignore_index=True)
+    df_all = pl.concat(dfs)
+
+    # =========================
+    # Dodavanje kolona koje postoje u kola a ne u df_all
+    # =========================
+    con = duckdb.connect(DB_PATH)
+    df_kola_sample = con.execute("SELECT * FROM kola LIMIT 5").fetchdf()
+    con.close()
+
+    missing_cols = set(df_kola_sample.columns) - set(df_all.columns)
+    for c in missing_cols:
+        if c == "DatumVreme":
+            df_all = df_all.with_columns(
+                (pl.col("Datum") + " " + pl.col("Vreme"))
+                .str.strptime(pl.Datetime, "%Y%m%d %H%M", strict=False)
+                .alias("DatumVreme")
+            )
+        elif c == "Datum_validan":
+            df_all = df_all.with_columns(
+                pl.col("Datum").str.strptime(pl.Date, "%Y%m%d", strict=False).is_not_null().alias("Datum_validan")
+            )
+        else:
+            df_all = df_all.with_columns(pl.lit(None).alias(c))
+
     st.write("📋 Kolone u df_all (novi_unosi):", df_all.columns.tolist())
+
+    # Registracija u DuckDB i kreiranje tabele novi_unosi
+    con = duckdb.connect(DB_PATH)
+    con.register("df_novi", df_all.to_pandas())
+    con.execute("CREATE OR REPLACE TABLE novi_unosi AS SELECT * FROM df_novi")
+    con.unregister("df_novi")
+    con.close()
+    st.success(f"✅ Učitan {len(df_all)} redova iz {len(txt_files)} TXT fajlova u tabelu 'novi_unosi'")
 else:
-    df_all = pd.DataFrame()
-    st.warning("⚠️ Nema TXT fajlova u folderu 'novi_unos'.")
+    st.warning("⚠️ Nema pronađenih TXT fajlova u folderu 'novi_unos'.")
 
 # =========================
-# Spajanje baze i novih fajlova, provera kolona
+# Kreiranje view kola_sve
 # =========================
 if os.path.exists(DB_PATH):
     con = duckdb.connect(DB_PATH)
-    # Provera tabele kola
-    try:
-        df_kola = con.execute("SELECT * FROM kola LIMIT 5").fetchdf()
-        st.write("📋 Kolone u `kola`:", df_kola.columns.tolist())
-        set_kola = set(df_kola.columns)
-        set_novi = set(df_all.columns)
-        st.write("✅ Kolone koje su iste:", set_kola & set_novi)
-        st.write("➕ Kolone koje postoje samo u `kola`:", set_kola - set_novi)
-        st.write("➕ Kolone koje postoje samo u `novi_unosi`:", set_novi - set_kola)
-    except duckdb.CatalogException:
-        st.warning("⚠️ Tabela `kola` ne postoji u bazi! Kreiram praznu tabelu sa istom strukturom kao df_all.")
-        if not df_all.empty:
-            df_all.head(0).to_parquet("empty_novi.parquet")  # privremeno
-            con.execute("CREATE OR REPLACE TABLE kola AS SELECT * FROM parquet_scan('empty_novi.parquet')")
-    # Kreiranje/menjanje tabele novi_unosi
-    if not df_all.empty:
-        con.register("df_novi", df_all)
-        con.execute("CREATE OR REPLACE TABLE novi_unosi AS SELECT * FROM df_novi")
-        con.unregister("df_novi")
-    else:
-        # Ako nema TXT fajlova, kreiraj praznu tabelu sa istom strukturom kao kola
-        con.execute("CREATE OR REPLACE TABLE novi_unosi AS SELECT * FROM kola WHERE FALSE")
-    # Kreiranje VIEW kola_sve
     con.execute("""
         CREATE OR REPLACE VIEW kola_sve AS
         SELECT * FROM kola
@@ -159,6 +188,7 @@ if os.path.exists(DB_PATH):
     """)
     con.close()
     st.success("✅ View 'kola_sve' je spreman za upotrebu")
+
 
 # =========================
 # Funkcije za rad sa bazom
