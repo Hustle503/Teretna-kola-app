@@ -15,99 +15,73 @@ import polars as pl
 # =========================
 # Putevi i folderi
 # =========================
-# =========================
-# Putevi i folderi
-# =========================
 DB_PATH = "kola_sk.db"
-FOLDER_ID = "1q__8P3gY-JMzqD5cpt8avm_7VAY-fHWI"
-NOVI_UNOS_FOLDER = "novi_unos"   # lokalni folder gde dodaješ txt fajlove
-NOVI_UNOS_FOLDER_ID = "1XQEUt3_TjM_lWahZHoZmlANExIwDwBW1"  # Google Drive ID za "novi unos"
+FOLDER_ID = "1q__8P3gY-JMzqD5cpt8avm_7VAY-fHWI"  # folder sa 48 part fajlova
+NOVI_UNOS_FOLDER = "novi_unos"
+NOVI_UNOS_FOLDER_ID = "1XQEUt3_TjM_lWahZHoZmlANExIwDwBW1"  # folder sa TXT fajlovima
 
 # =========================
-# Merge delova u jednu bazu
+# Funkcija za merge .part fajlova
 # =========================
 def merge_parts():
-    part_files = sorted(glob.glob("*.part*"), key=lambda x: int(re.search(r"part(\d+)", x).group(1)))
-    st.write("📂 Nađeno delova:", part_files, len(part_files))
     part_files = []
     for f in os.listdir("."):
         if re.match(r"(Copy of )?kola_sk\.db\.part\d+$", f):
             part_files.append(f)
 
     part_files = sorted(part_files, key=lambda x: int(re.search(r"part(\d+)", x).group(1)))
+    st.write("📂 Nađeno delova:", part_files, len(part_files))
 
     if len(part_files) == 48:
         with open(DB_PATH, "wb") as outfile:
             for fname in part_files:
                 with open(fname, "rb") as infile:
                     outfile.write(infile.read())
-        print(f"✅ Spojeno {len(part_files)} delova → {DB_PATH}")
+        st.success(f"✅ Spojeno {len(part_files)} delova → {DB_PATH}")
     else:
-        print(f"❌ Nađeno {len(part_files)} fajlova, očekivano 48")
-        print("📂 Fajlovi koje sam našao:", part_files)
+        st.error(f"❌ Nađeno {len(part_files)} fajlova, očekivano 48")
+        st.write("📂 Fajlovi koje sam našao:", part_files)
 
 # =========================
-# Preuzimanje delova baze (.part fajlovi)
+# Preuzimanje .part fajlova
 # =========================
 folder_url_parts = f"https://drive.google.com/drive/folders/{FOLDER_ID}?usp=sharing"
 st.info(f"⬇️ Preuzimam part fajlove iz foldera: {folder_url_parts}")
-
 try:
-    gdown.download_folder(
-        url=folder_url_parts,
-        output=".",   # skida u trenutni folder
-        quiet=False,
-        use_cookies=False
-    )
+    gdown.download_folder(url=folder_url_parts, output=".", quiet=False, use_cookies=False)
     st.success("✅ Svi .part fajlovi preuzeti")
 except Exception as e:
     st.warning(f"⚠️ Greška pri preuzimanju part fajlova: {e}. Ako su fajlovi već skinuti, pokušavam merge...")
 
-# 📌 UVEK pokušaj spajanje fajlova
+# UVEK pokušaj merge
 merge_parts()
 
-# Proveri da li je fajl napravljen
+# =========================
+# Provera baza i tabela
+# =========================
 if os.path.exists(DB_PATH):
     st.success(f"✅ Spojena baza je napravljena: {DB_PATH}")
+    con = duckdb.connect(DB_PATH)
+    tables = con.execute("SHOW TABLES").fetchall()
+    st.write("📋 Tabele u bazi nakon spajanja partova:", tables)
+    con.close()
 else:
     st.error("❌ Baza nije napravljena! Proveri da li imaš svih 48 .part fajlova.")
 
-# Pretraga svih .db fajlova
-db_files = glob.glob("**/*.db", recursive=True)
-st.write("📂 Nađeni .db fajlovi:", db_files)
-con = duckdb.connect(DB_PATH)
-tables = con.execute("SHOW TABLES").fetchall()
-st.write("📋 Tabele u bazi:", tables)
-con.close()
-
 # =========================
-# Preuzimanje TXT fajlova (novi unos)
+# Preuzimanje TXT fajlova
 # =========================
 os.makedirs(NOVI_UNOS_FOLDER, exist_ok=True)
-folder_url = f"https://drive.google.com/drive/folders/{NOVI_UNOS_FOLDER_ID}?usp=sharing"
-st.info(f"⬇️ Preuzimam TXT fajlove iz foldera: {folder_url}")
-
+folder_url_txt = f"https://drive.google.com/drive/folders/{NOVI_UNOS_FOLDER_ID}?usp=sharing"
+st.info(f"⬇️ Preuzimam TXT fajlove iz foldera: {folder_url_txt}")
 try:
-    gdown.download_folder(
-        url=folder_url,
-        output=NOVI_UNOS_FOLDER,
-        quiet=False,
-        use_cookies=False
-    )
+    gdown.download_folder(url=folder_url_txt, output=NOVI_UNOS_FOLDER, quiet=False, use_cookies=False)
     st.success("✅ TXT fajlovi preuzeti")
 except Exception as e:
     st.warning(f"⚠️ Greška pri preuzimanju TXT fajlova: {e}. Ako su fajlovi već skinuti, nastavljam...")
 
 # =========================
-# Fallback download sa pydrive2 (ako gdown ne uspe)
-# =========================
-def download_folder(folder_id: str, dest: str):
-    os.makedirs(dest, exist_ok=True)
-    url = f"https://drive.google.com/drive/folders/{folder_id}"
-    gdown.download_folder(url, output=dest, quiet=False, use_cookies=False)
-   
-# =========================
-# Učitavanje novih TXT fajlova u tabelu novi_unosi
+# Funkcija za parsiranje TXT fajlova
 # =========================
 def parse_txt(path) -> pd.DataFrame:
     rows = []
@@ -136,73 +110,47 @@ def parse_txt(path) -> pd.DataFrame:
             })
     return pd.DataFrame(rows)
 
-st.info("☁️ Osvežavam TXT fajlove sa Google Drive (novi unos)...")
-folder_url = f"https://drive.google.com/drive/folders/{NOVI_UNOS_FOLDER_ID}"
-gdown.download_folder(url=folder_url, output=NOVI_UNOS_FOLDER, quiet=False, use_cookies=False)
-
+# =========================
+# Učitavanje TXT fajlova
+# =========================
 txt_files = [os.path.join(NOVI_UNOS_FOLDER, f) for f in os.listdir(NOVI_UNOS_FOLDER) if f.endswith(".txt")]
 
 if txt_files:
     dfs = [parse_txt(f) for f in txt_files]
     df_all = pd.concat(dfs, ignore_index=True)
-
-    con = duckdb.connect(DB_PATH)
-    con.register("df_novi", df_all)
-    con.execute("""CREATE OR REPLACE TABLE novi_unosi AS SELECT * FROM df_novi""")
-    con.unregister("df_novi")
-    con.close()
-
-    st.success(f"✅ Učitan {len(df_all)} redova iz {len(txt_files)} TXT fajlova u tabelu 'novi_unosi'")
+    st.write("📋 Kolone u df_all (novi_unosi):", df_all.columns.tolist())
 else:
-    st.warning("⚠️ Nema pronađenih TXT fajlova u folderu 'novi_unos'.")
-
+    df_all = pd.DataFrame()
+    st.warning("⚠️ Nema TXT fajlova u folderu 'novi_unos'.")
 
 # =========================
-# Spajanje baze i novih fajlova
+# Spajanje baze i novih fajlova, provera kolona
 # =========================
 if os.path.exists(DB_PATH):
     con = duckdb.connect(DB_PATH)
-
-    # 1️⃣ Učitaj TXT fajlove iz "novi_unos"
-    dfs = []
-    folder_path = "novi_unos"
-    if os.path.exists(folder_path):
-        for fname in os.listdir(folder_path):
-            if fname.endswith(".txt"):
-                fpath = os.path.join(folder_path, fname)
-                df_txt = parse_txt(fpath)
-                dfs.append(df_txt)
-
-    if dfs:
-        dfs = [parse_txt(f) for f in txt_files]
-        df_all = pd.concat(dfs, ignore_index=True)
-        st.write("📋 Kolone u df_all (novi_unosi):", df_all.columns.tolist())
-        con = duckdb.connect(DB_PATH)
+    # Provera tabele kola
+    try:
         df_kola = con.execute("SELECT * FROM kola LIMIT 5").fetchdf()
-        con.close()
         st.write("📋 Kolone u `kola`:", df_kola.columns.tolist())
-        # Brza provera razlika
         set_kola = set(df_kola.columns)
         set_novi = set(df_all.columns)
         st.write("✅ Kolone koje su iste:", set_kola & set_novi)
         st.write("➕ Kolone koje postoje samo u `kola`:", set_kola - set_novi)
         st.write("➕ Kolone koje postoje samo u `novi_unosi`:", set_novi - set_kola)
- 
-        # Ako ima novih fajlova → kreiraj/menjaj tabelu
-        con = duckdb.connect(DB_PATH)
+    except duckdb.CatalogException:
+        st.warning("⚠️ Tabela `kola` ne postoji u bazi! Kreiram praznu tabelu sa istom strukturom kao df_all.")
+        if not df_all.empty:
+            df_all.head(0).to_parquet("empty_novi.parquet")  # privremeno
+            con.execute("CREATE OR REPLACE TABLE kola AS SELECT * FROM parquet_scan('empty_novi.parquet')")
+    # Kreiranje/menjanje tabele novi_unosi
+    if not df_all.empty:
         con.register("df_novi", df_all)
-        con.execute("""CREATE OR REPLACE TABLE novi_unosi AS SELECT * FROM df_novi""")
+        con.execute("CREATE OR REPLACE TABLE novi_unosi AS SELECT * FROM df_novi")
         con.unregister("df_novi")
-        con.close()
     else:
-        # Ako nema fajlova, napravi praznu tabelu sa strukturom
-        con.execute("""
-            CREATE OR REPLACE TABLE novi_unosi AS 
-            SELECT * FROM kola WHERE FALSE
-        """)
-        st.warning("⚠️ Nema TXT fajlova u 'novi_unos' folderu → kreirana prazna tabela")
-
-    # 2️⃣ Tek sada kreiraj VIEW
+        # Ako nema TXT fajlova, kreiraj praznu tabelu sa istom strukturom kao kola
+        con.execute("CREATE OR REPLACE TABLE novi_unosi AS SELECT * FROM kola WHERE FALSE")
+    # Kreiranje VIEW kola_sve
     con.execute("""
         CREATE OR REPLACE VIEW kola_sve AS
         SELECT * FROM kola
@@ -210,7 +158,6 @@ if os.path.exists(DB_PATH):
         SELECT * FROM novi_unosi
     """)
     con.close()
-
     st.success("✅ View 'kola_sve' je spreman za upotrebu")
 
 # =========================
