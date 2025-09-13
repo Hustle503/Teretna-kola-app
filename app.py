@@ -186,31 +186,44 @@ if txt_files:
             )
         else:
             df_all = df_all.with_columns(pl.lit(None).alias(c))
-# =========================
-# Sinkronizacija tipova i redosleda kolona sa tabelom 'kola'
-# =========================
+# Sinkronizacija redosleda i tipova
 con = duckdb.connect(DB_PATH)
-# Učitaj kolone i tipove iz 'kola'
 kola_info = con.execute("PRAGMA table_info('kola')").fetchdf()
 con.close()
 
-# Kreiraj df_all sa istim redosledom i tipovima
 new_cols = kola_info["name"].tolist()
 new_types = kola_info["type"].tolist()
 
-# Redosled kolona
-df_all = df_all.select([col for col in new_cols if col in df_all.columns] +
-                        [pl.lit(None).alias(c) for c in new_cols if c not in df_all.columns])
-
-# Konverzija tipova
+# Kreiraj df_all sa svim kolonama, redosledom i tipovima
+cols_to_add = []
 for c, t in zip(new_cols, new_types):
     if c in df_all.columns:
+        # Konvertuj tip
         if t.upper() in ["INTEGER", "INT", "BIGINT"]:
-            df_all = df_all.with_columns(pl.col(c).cast(pl.Int64, strict=False))
+            cols_to_add.append(pl.col(c).cast(pl.Int64, strict=False).alias(c))
         elif t.upper() in ["DOUBLE", "FLOAT", "DECIMAL"]:
-            df_all = df_all.with_columns(pl.col(c).cast(pl.Float64, strict=False))
-        else:  # STRING, VARCHAR, DATE, TIMESTAMP itd.
-            df_all = df_all.with_columns(pl.col(c).cast(pl.Utf8, strict=False))
+            cols_to_add.append(pl.col(c).cast(pl.Float64, strict=False).alias(c))
+        elif t.upper() in ["DATE"]:
+            cols_to_add.append(pl.col(c).str.strptime(pl.Date, "%Y%m%d", strict=False).alias(c))
+        elif t.upper() in ["TIMESTAMP", "DATETIME"]:
+            cols_to_add.append(pl.col(c).cast(pl.Datetime, strict=False).alias(c))
+        else:
+            cols_to_add.append(pl.col(c).cast(pl.Utf8, strict=False).alias(c))
+    else:
+        # Ako kolona ne postoji u df_all, dodaj None sa odgovarajućim tipom
+        if t.upper() in ["INTEGER", "INT", "BIGINT"]:
+            cols_to_add.append(pl.lit(None).cast(pl.Int64).alias(c))
+        elif t.upper() in ["DOUBLE", "FLOAT", "DECIMAL"]:
+            cols_to_add.append(pl.lit(None).cast(pl.Float64).alias(c))
+        elif t.upper() in ["DATE"]:
+            cols_to_add.append(pl.lit(None).cast(pl.Date).alias(c))
+        elif t.upper() in ["TIMESTAMP", "DATETIME"]:
+            cols_to_add.append(pl.lit(None).cast(pl.Datetime).alias(c))
+        else:
+            cols_to_add.append(pl.lit(None).cast(pl.Utf8).alias(c))
+
+df_all = df_all.select(cols_to_add)
+
     # Registruj i napravi tabelu
     con = duckdb.connect(DB_PATH)
     con.register("df_novi", df_all.to_pandas())
