@@ -258,11 +258,7 @@ except NameError:
 # Funkcije za rad sa bazom
 # =========================
 def run_sql(db_file: str, sql: str) -> pd.DataFrame:
-    con = duckdb.connect(db_file, read_only=True)
-    try:
-        df = con.execute(sql).fetchdf()
-   
-    return df
+    return duckdb.sql(sql).fetchdf()
 
 def create_or_replace_table_from_df(db_file: str, table_name: str, df: pd.DataFrame):
     con = duckdb.connect(db_file)
