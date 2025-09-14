@@ -206,7 +206,13 @@ con.execute("""
 """)
 con.close()
 st.success("✅ View 'kola_sve' je spreman za upotrebu")
+# ✅ Definišemo podrazumevanu tabelu/view
+DEFAULT_TABLE = "kola_sve"
 
+try:
+    table_name
+except NameError:
+    table_name = DEFAULT_TABLE
 
 
 # =========================
