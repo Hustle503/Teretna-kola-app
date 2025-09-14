@@ -363,7 +363,7 @@ with tab4:
     )
     try:
         cols_sql = ", ".join([f'"{c}"' if c not in ("DatumVreme",) else c for c in cols])
-        df_preview = run_sql(DB_PATH, f'SELECT {cols_sql} FROM "{table_name}" LIMIT {int(limit)}')
+        df_preview = run_sql(f'SELECT {cols_sql} FROM "{table_name}" LIMIT {int(limit)}')
         st.dataframe(df_preview, use_container_width=True)
     except Exception as e:
         st.error(f"Greška pri čitanju: {e}")
