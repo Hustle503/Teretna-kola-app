@@ -189,8 +189,9 @@ try:
     )
     st.success("✅ Preuzimanje završeno ili fajlovi već postoje.")
 except Exception as e:
-    st.warning(f"⚠️ Nije uspelo preuzimanje TXT fajlova ({e}). "
-               "Koristiću fajlove koji su već u folderu 'novi_unos'.")
+    st.warning(f"⚠️ Nije uspelo preuzimanje TXT fajlova: {e}")
+    # >>> važno: samo nastavi dalje, bez pada
+    pass
 
 # =========================
 # Učitavanje Parquet fajlova → kola_sk
