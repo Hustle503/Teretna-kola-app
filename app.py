@@ -281,6 +281,7 @@ try:
         FROM stanje s
         JOIN "{table_name}" k
         ON CAST(s.SerijaIpodserija AS VARCHAR) = REPLACE(CAST(k.broj_kola_bez_rezima_i_kb AS VARCHAR), ' ', '')
+    )
     SELECT * FROM ranked WHERE rn = 1
     """
     df_last = run_sql(DB_PATH, q_last)
@@ -291,7 +292,6 @@ try:
         st.dataframe(df_last, use_container_width=True)
 except Exception as e:
     st.error(f"Greška u upitu: {e}")
-
 # =========================
 # Glavni naslov i tabovi
 # =========================
