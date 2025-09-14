@@ -72,6 +72,12 @@ if not os.path.exists(DB_PATH):
     st.error("❌ Baza nije napravljena! Proveri da li imaš svih 48 .part fajlova.")
 else:
     st.success(f"✅ Spojena baza je napravljena: {DB_PATH}")
+# =========================
+# Globalna DuckDB konekcija
+# =========================
+if "con" not in st.session_state:
+    st.session_state.con = duckdb.connect(DB_PATH)
+con = st.session_state.con
 
 # =========================
 # Funkcija za parsiranje TXT fajlova
