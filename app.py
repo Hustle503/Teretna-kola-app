@@ -12,6 +12,20 @@ from pydrive2.auth import GoogleAuth
 from pydrive2.drive import GoogleDrive
 import polars as pl
 
+import os
+import re
+import io
+import time
+import duckdb
+import shutil
+import pandas as pd
+import streamlit as st
+import gdown
+import glob
+from pydrive2.auth import GoogleAuth
+from pydrive2.drive import GoogleDrive
+import polars as pl
+import hashlib
 
 # =========================
 # Putevi i folderi
@@ -20,6 +34,7 @@ DB_PATH = "kola_sk.db"
 FOLDER_ID = "1q__8P3gY-JMzqD5cpt8avm_7VAY-fHWI"  # folder sa part fajlovima
 NOVI_UNOS_FOLDER = "novi unos"
 NOVI_UNOS_FOLDER_ID = "1XQEUt3_TjM_lWahZHoZmlANExIwDwBW1"  # folder sa TXT fajlovima
+HASH_FILE = "hashovi.pkl"  # lokalni fajl za čuvanje hashova TXT fajlova
 
 # =========================
 # Merge delova u jednu bazu
@@ -38,13 +53,6 @@ def merge_parts():
 
     if missing_numbers:
         st.warning(f"❌ Nedostaju delovi: {missing_numbers}. Pokušavam ponovo da pronađem...")
-        for num in missing_numbers:
-            fname = f"Copy of kola_sk.db.part{num}"
-            if os.path.exists(fname):
-                part_files.append((num, fname))
-        part_files.sort(key=lambda x: x[0])
-        found_numbers = [num for num, _ in part_files]
-        missing_numbers = [num for num in expected_numbers if num not in found_numbers]
 
     if missing_numbers:
         st.error(f"❌ I dalje nedostaju delovi: {missing_numbers}. Merge nije moguć.")
@@ -56,23 +64,6 @@ def merge_parts():
                 outfile.write(infile.read())
 
     st.success(f"✅ Spojeno svih 48 delova → {DB_PATH}")
-
-# =========================
-# Preuzimanje delova baze
-# =========================
-folder_url_parts = f"https://drive.google.com/drive/folders/{FOLDER_ID}?usp=sharing"
-st.info(f"⬇️ Preuzimam part fajlove iz foldera: {folder_url_parts}")
-try:
-    gdown.download_folder(url=folder_url_parts, output=".", quiet=False, use_cookies=False)
-except Exception as e:
-    st.warning(f"⚠️ Greška pri preuzimanju part fajlova: {e}. Ako su fajlovi već skinuti, pokušavam merge...")
-
-merge_parts()
-
-if not os.path.exists(DB_PATH):
-    st.error("❌ Baza nije napravljena! Proveri da li imaš svih 48 .part fajlova.")
-else:
-    st.success(f"✅ Spojena baza je napravljena: {DB_PATH}")
 
 # =========================
 # Funkcija za parsiranje TXT fajlova
@@ -104,7 +95,6 @@ def parse_txt(path) -> pl.DataFrame:
 
     df = pl.DataFrame(rows)
 
-    # Ispravka vremena 2400 → 0000 i pomeranje datuma
     df = df.with_columns([
         pl.when(pl.col("Vreme") == "2400").then(pl.lit("0000")).otherwise(pl.col("Vreme")).alias("Vreme"),
         pl.when(pl.col("Vreme") == "0000").then(
@@ -112,45 +102,58 @@ def parse_txt(path) -> pl.DataFrame:
         ).otherwise(pl.col("Datum")).alias("Datum"),
     ])
 
-    # DatumVreme i Datum_validan
     df = df.with_columns([
         (pl.col("Datum") + " " + pl.col("Vreme")).str.strptime(pl.Datetime, "%Y%m%d %H%M", strict=False).alias("DatumVreme"),
         pl.col("Datum").str.strptime(pl.Date, "%Y%m%d", strict=False).is_not_null().alias("Datum_validan")
     ])
 
-    # Brojevi u int
     df = df.with_columns([
         pl.col("tara").cast(pl.Int32, strict=False),
         pl.col("NetoTone").cast(pl.Int32, strict=False),
         pl.col("Inv br").cast(pl.Int32, strict=False),
     ])
 
-    # Kolona koja je bila problematična
     df = df.with_columns([pl.lit(None).alias("broj_kola_bez_rezima_i_kb")])
-
     return df
 
 # =========================
-# Preuzimanje TXT fajlova
+# Funkcija za hash fajla
+# =========================
+def hash_file(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while chunk := f.read(8192):
+            h.update(chunk)
+    return h.hexdigest()
+
+# =========================
+# Preuzimanje TXT fajlova sa detekcijom promena
 # =========================
 os.makedirs(NOVI_UNOS_FOLDER, exist_ok=True)
-folder_url = f"https://drive.google.com/drive/folders/{NOVI_UNOS_FOLDER_ID}"
-st.info(f"⬇️ Preuzimam TXT fajlove iz foldera: {folder_url}")
+
 try:
-    gdown.download_folder(url=folder_url, output=NOVI_UNOS_FOLDER, quiet=False, use_cookies=False)
-    st.success("✅ TXT fajlovi preuzeti")
-except Exception as e:
-    st.warning(f"⚠️ Greška pri preuzimanju TXT fajlova: {e}. Ako su fajlovi već skinuti, nastavljam...")
+    import pickle
+    if os.path.exists(HASH_FILE):
+        with open(HASH_FILE, "rb") as f:
+            hashovi_stari = pickle.load(f)
+    else:
+        hashovi_stari = {}
+except:
+    hashovi_stari = {}
 
-txt_files = [os.path.join(NOVI_UNOS_FOLDER, f) for f in os.listdir(NOVI_UNOS_FOLDER) if f.endswith(".txt")]
+txt_files = [os.path.join(NOVI_UNOS_FOLDER, f) for f in os.listdir(NOVI_UNOS_FOLDER) if f.lower().endswith(".txt")]
 
-df_all = pl.DataFrame()
+novi_ili_izmenjeni = []
+for f in txt_files:
+    h = hash_file(f)
+    if f not in hashovi_stari or hashovi_stari[f] != h:
+        novi_ili_izmenjeni.append(f)
+        hashovi_stari[f] = h
 
-if txt_files:
-    dfs = [parse_txt(f) for f in txt_files]
+if novi_ili_izmenjeni:
+    dfs = [parse_txt(f) for f in novi_ili_izmenjeni]
     df_all = pl.concat(dfs)
 
-    # Sinkronizacija kolona sa tabelom kola
     con = duckdb.connect(DB_PATH)
     kola_info = con.execute("PRAGMA table_info('kola')").fetchdf()
     con.close()
@@ -158,41 +161,36 @@ if txt_files:
     cols = kola_info["name"].tolist()
     types = kola_info["type"].tolist()
 
-    # Dodaj nedostajuće kolone
     for c in cols:
         if c not in df_all.columns:
             df_all = df_all.with_columns(pl.lit(None).alias(c))
 
-    # Redosled kolona i konverzija tipova
     df_all = df_all[cols]
 
-type_map = {
-    "Inv br": "Int64",        # Pandas nullable int
-    "tara": "Int64",
-    "NetoTone": "Int64",
-    "DatumVreme": "string",
-    "Datum_validan": "string"
-}
+    # cast types
+    type_map = {
+        "Inv br": "Int64",
+        "tara": "Int64",
+        "NetoTone": "Int64",
+        "DatumVreme": "string",
+        "Datum_validan": "string"
+    }
+    for col, t in type_map.items():
+        if col in df_all.columns:
+            df_all[col] = df_all[col].cast(pl.Int64 if t=="Int64" else pl.Utf8)
 
-for col, t in type_map.items():
-    if col in df_all.columns:
-        try:
-            df_all[col] = df_all[col].astype(t)
-        except Exception as e:
-            print(f"⚠️ Greška pri kastovanju kolone {col}: {e}")
     # Registracija i kreiranje tabele
     con = duckdb.connect(DB_PATH)
     con.register("df_novi", df_all.to_pandas())
     con.execute("CREATE OR REPLACE TABLE novi_unosi AS SELECT * FROM df_novi")
     con.unregister("df_novi")
     con.close()
-    st.success(f"✅ Učitan {len(df_all)} redova iz {len(txt_files)} TXT fajlova u tabelu 'novi_unosi'")
+    st.success(f"✅ Učitano {len(df_all)} redova iz {len(novi_ili_izmenjeni)} novih/izmenjenih TXT fajlova u 'novi_unosi'")
 
+    with open(HASH_FILE, "wb") as f:
+        pickle.dump(hashovi_stari, f)
 else:
-    con = duckdb.connect(DB_PATH)
-    con.execute("CREATE OR REPLACE TABLE novi_unosi AS SELECT * FROM kola WHERE FALSE")
-    con.close()
-    st.warning("⚠️ Nema pronađenih TXT fajlova u folderu 'novi_unos'.")
+    st.info("✅ Nema novih ili izmenjenih TXT fajlova. Tabela 'novi_unosi' ostaje nepromenjena.")
 
 # =========================
 # Kreiranje view kola_sve
@@ -206,14 +204,15 @@ con.execute("""
 """)
 con.close()
 st.success("✅ View 'kola_sve' je spreman za upotrebu")
-# ✅ Definišemo podrazumevanu tabelu/view
-DEFAULT_TABLE = "kola_sve"
 
+# =========================
+# Podrazumevana tabela/view
+# =========================
+DEFAULT_TABLE = "kola_sve"
 try:
     table_name
 except NameError:
     table_name = DEFAULT_TABLE
-
 
 # =========================
 # Funkcije za rad sa bazom
@@ -234,125 +233,6 @@ def create_or_replace_table_from_df(db_file: str, table_name: str, df: pd.DataFr
         con.unregister("df_tmp")
     finally:
         con.close()
-
-# =========================
-# Preuzimanje baze ako ne postoji
-# =========================
-if not os.path.exists(DB_PATH):
-    st.info("☁️ Preuzimam delove baze sa Google Drive...")
-    try:
-        gdown.download_folder(id=FOLDER_ID, quiet=False, use_cookies=False)
-    except Exception as e:
-        st.warning(f"⚠️ gdown nije uspeo ({e}), prelazim na pydrive2...")
-        try:
-            download_with_pydrive2(FOLDER_ID)
-        except Exception as ee:
-            st.error(f"❌ Ni pydrive2 nije uspeo: {ee}")
-    merge_parts()
-
-# =========================
-# Inicijalizacija baze
-# =========================
-if os.path.exists(DB_PATH):
-    st.success(f"✅ Baza {DB_PATH} je pronađena")
-
-    # učitaj TXT fajlove iz foldera novi_unos
-    if os.path.exists(NOVI_UNOS_FOLDER):
-        all_txt = []
-        for fname in os.listdir(NOVI_UNOS_FOLDER):
-            if fname.lower().endswith(".txt"):
-                st.write(f"📥 Učitavam {fname}")
-                df_txt = parse_txt(os.path.join(NOVI_UNOS_FOLDER, fname))
-                all_txt.append(df_txt)
-
-        if all_txt:
-            df_all = pl.concat(all_txt).to_pandas()
-            create_or_replace_table_from_df(DB_PATH, "novi_unosi", df_all)
-            st.success(f"✅ Učitano {len(df_all)} redova iz TXT fajlova u 'novi_unosi'")
-        else:
-            st.warning("⚠️ Nema TXT fajlova u 'novi_unos' folderu")
-
-    # kreiraj pogled kola_sve
-    def create_or_replace_table_from_df(db_path, table_name, df):
-        con = duckdb.connect(db_path)
-        try:
-            con.execute(f'DROP TABLE IF EXISTS "{table_name}"')
-            con.register("df_tmp", df.to_pandas())
-            con.execute(f'CREATE TABLE "{table_name}" AS SELECT * FROM df_tmp')
-            con.unregister("df_tmp")
-        finally:
-            con.close()
-    # test
-    try:
-        df_test = run_sql(DB_PATH, "SELECT COUNT(*) AS broj_redova FROM kola_sve")
-        st.write("📊 Ukupan broj redova u kola_sve:", df_test.iloc[0, 0])
-    except Exception as e:
-        st.error(f"❌ Problem prilikom testiranja: {e}")
-else:
-    st.error(f"❌ Baza {DB_PATH} nije pronađena")
-# =========================
-# Sidebar
-# =========================
-st.sidebar.title("⚙️ Podešavanja")
-st.sidebar.caption("Glavna baza: kola_sk.db (auto download). Opciona lokalna baza za UNION: kola_sk_update.db")
-st.sidebar.markdown("---")
-
-st.sidebar.subheader("📂 Uvoz Excela → tabela 'stanje'")
-uploaded_excel_stanje = st.sidebar.file_uploader("Izaberi Excel (.xlsx)", type=["xlsx"], key="stanje_up")
-if uploaded_excel_stanje is not None:
-    if st.sidebar.button("📥 Učitaj u bazu kao 'stanje'"):
-        try:
-            df_stanje = pd.read_excel(uploaded_excel_stanje)
-            create_or_replace_table_from_df(DB_PATH, "stanje", df_stanje)
-            st.sidebar.success(f"✅ 'stanje' učitano ({len(df_stanje)} redova).")
-        except Exception as e:
-            st.sidebar.error(f"❌ Greška: {e}")
-
-st.sidebar.subheader("🗺️ Uvoz mape stanica → tabela 'stanice'")
-uploaded_excel_stanice = st.sidebar.file_uploader("Izaberi Excel (.xlsx)", type=["xlsx"], key="stanice_up")
-if uploaded_excel_stanice is not None:
-    if st.sidebar.button("📥 Učitaj u bazu kao 'stanice'"):
-        try:
-            df_st = pd.read_excel(uploaded_excel_stanice)
-            create_or_replace_table_from_df(DB_PATH, "stanice", df_st)
-            st.sidebar.success(f"✅ 'stanice' učitano ({len(df_st)} redova).")
-        except Exception as e:
-            st.sidebar.error(f"❌ Greška: {e}")
-
-st.sidebar.markdown("---")
-st.sidebar.caption("Sve tabele možete koristiti u SQL upitima. Glavni podaci su u 'kola_view'.")
-
-# =========================
-try:
-    q_last = f"""
-    WITH ranked AS (
-        SELECT 
-            s.SerijaIpodserija,
-            k.*,
-            ROW_NUMBER() OVER (
-                PARTITION BY s.SerijaIpodserija
-                ORDER BY k.DatumVreme DESC
-            ) AS rn
-        FROM stanje s
-        JOIN "{table_name}" k
-          ON CAST(s.SerijaIpodserija AS TEXT) = REPLACE(k.broj_kola_bez_rezima_i_kb, ' ', '')
-    )
-    SELECT *
-    FROM ranked
-    WHERE rn = 1
-    """
-
-    df_last = run_sql(DB_PATH, q_last)
-
-    if df_last.empty:
-        st.warning("⚠️ Nema pronađenih podataka.")
-    else:
-        st.success(f"✅ Pronađeno {len(df_last)} poslednjih unosa.")
-        st.dataframe(df_last, use_container_width=True)
-
-except Exception as e:
-    st.error(f"Greška u upitu: {e}")
-
 # =========================
 # Glavni naslov i tabovi
 # =========================
