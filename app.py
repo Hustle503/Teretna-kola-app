@@ -11,21 +11,8 @@ import glob
 from pydrive2.auth import GoogleAuth
 from pydrive2.drive import GoogleDrive
 import polars as pl
-
-import os
-import re
-import io
-import time
-import duckdb
-import shutil
-import pandas as pd
-import streamlit as st
-import gdown
-import glob
-from pydrive2.auth import GoogleAuth
-from pydrive2.drive import GoogleDrive
-import polars as pl
 import hashlib
+import json
 
 # =========================
 # Putevi i folderi
@@ -34,7 +21,7 @@ DB_PATH = "kola_sk.db"
 FOLDER_ID = "1q__8P3gY-JMzqD5cpt8avm_7VAY-fHWI"  # folder sa part fajlovima
 NOVI_UNOS_FOLDER = "novi unos"
 NOVI_UNOS_FOLDER_ID = "1XQEUt3_TjM_lWahZHoZmlANExIwDwBW1"  # folder sa TXT fajlovima
-HASH_FILE = "hashovi.pkl"  # lokalni fajl za čuvanje hashova TXT fajlova
+HASH_FILE = "novi_unos_hash.json"
 
 # =========================
 # Merge delova u jednu bazu
@@ -45,7 +32,6 @@ def merge_parts():
         m = re.match(r"(Copy of )?kola_sk\.db\.part(\d+)$", f)
         if m:
             part_files.append((int(m.group(2)), f))
-
     part_files.sort(key=lambda x: x[0])
     found_numbers = [num for num, _ in part_files]
     expected_numbers = list(range(1, 49))
@@ -53,6 +39,13 @@ def merge_parts():
 
     if missing_numbers:
         st.warning(f"❌ Nedostaju delovi: {missing_numbers}. Pokušavam ponovo da pronađem...")
+        for num in missing_numbers:
+            fname = f"Copy of kola_sk.db.part{num}"
+            if os.path.exists(fname):
+                part_files.append((num, fname))
+        part_files.sort(key=lambda x: x[0])
+        found_numbers = [num for num, _ in part_files]
+        missing_numbers = [num for num in expected_numbers if num not in found_numbers]
 
     if missing_numbers:
         st.error(f"❌ I dalje nedostaju delovi: {missing_numbers}. Merge nije moguć.")
@@ -62,7 +55,6 @@ def merge_parts():
         for _, fname in part_files:
             with open(fname, "rb") as infile:
                 outfile.write(infile.read())
-
     st.success(f"✅ Spojeno svih 48 delova → {DB_PATH}")
 
 # =========================
@@ -94,103 +86,115 @@ def parse_txt(path) -> pl.DataFrame:
             })
 
     df = pl.DataFrame(rows)
-
     df = df.with_columns([
         pl.when(pl.col("Vreme") == "2400").then(pl.lit("0000")).otherwise(pl.col("Vreme")).alias("Vreme"),
         pl.when(pl.col("Vreme") == "0000").then(
             (pl.col("Datum").str.strptime(pl.Date, "%Y%m%d", strict=False) + pl.duration(days=1)).dt.strftime("%Y%m%d")
         ).otherwise(pl.col("Datum")).alias("Datum"),
-    ])
-
-    df = df.with_columns([
         (pl.col("Datum") + " " + pl.col("Vreme")).str.strptime(pl.Datetime, "%Y%m%d %H%M", strict=False).alias("DatumVreme"),
         pl.col("Datum").str.strptime(pl.Date, "%Y%m%d", strict=False).is_not_null().alias("Datum_validan")
     ])
-
     df = df.with_columns([
         pl.col("tara").cast(pl.Int32, strict=False),
         pl.col("NetoTone").cast(pl.Int32, strict=False),
         pl.col("Inv br").cast(pl.Int32, strict=False),
+        pl.lit(None).alias("broj_kola_bez_rezima_i_kb")
     ])
-
-    df = df.with_columns([pl.lit(None).alias("broj_kola_bez_rezima_i_kb")])
     return df
 
 # =========================
-# Funkcija za hash fajla
+# Funkcije za hash fajlova
 # =========================
 def hash_file(path):
-    h = hashlib.sha256()
+    h = hashlib.md5()
     with open(path, "rb") as f:
         while chunk := f.read(8192):
             h.update(chunk)
     return h.hexdigest()
 
-# =========================
-# Preuzimanje TXT fajlova sa detekcijom promena
-# =========================
-os.makedirs(NOVI_UNOS_FOLDER, exist_ok=True)
-
-try:
-    import pickle
+def load_hashes():
     if os.path.exists(HASH_FILE):
-        with open(HASH_FILE, "rb") as f:
-            hashovi_stari = pickle.load(f)
-    else:
-        hashovi_stari = {}
-except:
-    hashovi_stari = {}
+        with open(HASH_FILE, "r") as f:
+            return json.load(f)
+    return {}
 
-txt_files = [os.path.join(NOVI_UNOS_FOLDER, f) for f in os.listdir(NOVI_UNOS_FOLDER) if f.lower().endswith(".txt")]
+def save_hashes(hashes):
+    with open(HASH_FILE, "w") as f:
+        json.dump(hashes, f)
 
-novi_ili_izmenjeni = []
-for f in txt_files:
-    h = hash_file(f)
-    if f not in hashovi_stari or hashovi_stari[f] != h:
-        novi_ili_izmenjeni.append(f)
-        hashovi_stari[f] = h
+# =========================
+# Funkcija za učitavanje samo novih/izmenjenih fajlova
+# =========================
+def load_novi_unosi():
+    os.makedirs(NOVI_UNOS_FOLDER, exist_ok=True)
+    txt_files = [os.path.join(NOVI_UNOS_FOLDER, f) for f in os.listdir(NOVI_UNOS_FOLDER) if f.lower().endswith(".txt")]
+    if not txt_files:
+        return pl.DataFrame()
 
-if novi_ili_izmenjeni:
-    dfs = [parse_txt(f) for f in novi_ili_izmenjeni]
-    df_all = pl.concat(dfs)
+    old_hashes = load_hashes()
+    new_hashes = {}
+    changed_files = []
 
-    con = duckdb.connect(DB_PATH)
-    kola_info = con.execute("PRAGMA table_info('kola')").fetchdf()
-    con.close()
+    for f in txt_files:
+        h = hash_file(f)
+        new_hashes[f] = h
+        if f not in old_hashes or old_hashes[f] != h:
+            changed_files.append(f)
 
-    cols = kola_info["name"].tolist()
-    types = kola_info["type"].tolist()
+    save_hashes(new_hashes)
 
-    for c in cols:
-        if c not in df_all.columns:
-            df_all = df_all.with_columns(pl.lit(None).alias(c))
+    if not changed_files:
+        st.info("ℹ️ Nema novih ili izmenjenih TXT fajlova.")
+        return pl.DataFrame()
 
-    df_all = df_all[cols]
+    st.info(f"⬇️ Učitavam {len(changed_files)} novih/izmenjenih fajlova...")
+    dfs = [parse_txt(f) for f in changed_files]
+    return pl.concat(dfs)
 
-    # cast types
-    type_map = {
-        "Inv br": "Int64",
-        "tara": "Int64",
-        "NetoTone": "Int64",
-        "DatumVreme": "string",
-        "Datum_validan": "string"
-    }
-    for col, t in type_map.items():
-        if col in df_all.columns:
-            df_all[col] = df_all[col].cast(pl.Int64 if t=="Int64" else pl.Utf8)
+# =========================
+# Funkcije za rad sa bazom
+# =========================
+def run_sql(db_file: str, sql: str) -> pd.DataFrame:
+    con = duckdb.connect(db_file, read_only=True)
+    try:
+        df = con.execute(sql).fetchdf()
+    finally:
+        con.close()
+    return df
 
-    # Registracija i kreiranje tabele
-    con = duckdb.connect(DB_PATH)
-    con.register("df_novi", df_all.to_pandas())
-    con.execute("CREATE OR REPLACE TABLE novi_unosi AS SELECT * FROM df_novi")
-    con.unregister("df_novi")
-    con.close()
-    st.success(f"✅ Učitano {len(df_all)} redova iz {len(novi_ili_izmenjeni)} novih/izmenjenih TXT fajlova u 'novi_unosi'")
+def create_or_replace_table_from_df(db_file: str, table_name: str, df: pd.DataFrame):
+    con = duckdb.connect(db_file)
+    try:
+        con.register("df_tmp", df)
+        con.execute(f'CREATE OR REPLACE TABLE "{table_name}" AS SELECT * FROM df_tmp')
+        con.unregister("df_tmp")
+    finally:
+        con.close()
 
-    with open(HASH_FILE, "wb") as f:
-        pickle.dump(hashovi_stari, f)
+# =========================
+# Preuzimanje baze ako ne postoji
+# =========================
+folder_url_parts = f"https://drive.google.com/drive/folders/{FOLDER_ID}?usp=sharing"
+st.info(f"⬇️ Preuzimam part fajlove iz foldera: {folder_url_parts}")
+try:
+    gdown.download_folder(url=folder_url_parts, output=".", quiet=False, use_cookies=False)
+except Exception as e:
+    st.warning(f"⚠️ Greška pri preuzimanju part fajlova: {e}. Ako su fajlovi već skinuti, pokušavam merge...")
+
+merge_parts()
+
+# =========================
+# Učitavanje TXT fajlova i kreiranje tabele novi_unosi
+# =========================
+df_all = load_novi_unosi()
+if not df_all.is_empty():
+    create_or_replace_table_from_df(DB_PATH, "novi_unosi", df_all.to_pandas())
+    st.success(f"✅ Učitano {len(df_all)} redova iz TXT fajlova u tabelu 'novi_unosi'")
 else:
-    st.info("✅ Nema novih ili izmenjenih TXT fajlova. Tabela 'novi_unosi' ostaje nepromenjena.")
+    con = duckdb.connect(DB_PATH)
+    con.execute("CREATE OR REPLACE TABLE novi_unosi AS SELECT * FROM kola WHERE FALSE")
+    con.close()
+    st.warning("⚠️ Nema pronađenih TXT fajlova u folderu 'novi_unos'.")
 
 # =========================
 # Kreiranje view kola_sve
@@ -206,8 +210,7 @@ con.close()
 st.success("✅ View 'kola_sve' je spreman za upotrebu")
 
 # =========================
-# Podrazumevana tabela/view
-# =========================
+# ✅ Definišemo podrazumevanu tabelu/view
 DEFAULT_TABLE = "kola_sve"
 try:
     table_name
@@ -233,6 +236,12 @@ def create_or_replace_table_from_df(db_file: str, table_name: str, df: pd.DataFr
         con.unregister("df_tmp")
     finally:
         con.close()
+
+# =========================
+# Ovde ide ostatak tvog sidebar-a, SQL upiti i prikaz podataka
+# (tvoji prethodni kodovi za sidebar, poslednje unose, kola_sve view itd.)
+# =========================
+
 # =========================
 # Glavni naslov i tabovi
 # =========================
