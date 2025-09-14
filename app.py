@@ -164,15 +164,22 @@ if txt_files:
             df_all = df_all.with_columns(pl.lit(None).alias(c))
 
     # Redosled kolona i konverzija tipova
-    df_all = df_all.select(cols)
-    for c, t in zip(cols, types):
-        if t.upper() in ["INTEGER", "INT", "BIGINT"]:
-            df_all = df_all.with_columns(pl.col(c).cast(pl.Int64, strict=False))
-        elif t.upper() in ["DOUBLE", "FLOAT", "DECIMAL"]:
-            df_all = df_all.with_columns(pl.col(c).cast(pl.Float64, strict=False))
-        else:
-            df_all = df_all.with_columns(pl.col(c).cast(pl.Utf8, strict=False))
+    df_all = df_all[cols]
 
+type_map = {
+    "Inv br": "Int64",        # Pandas nullable int
+    "tara": "Int64",
+    "NetoTone": "Int64",
+    "DatumVreme": "string",
+    "Datum_validan": "string"
+}
+
+for col, t in type_map.items():
+    if col in df_all.columns:
+        try:
+            df_all[col] = df_all[col].astype(t)
+        except Exception as e:
+            print(f"⚠️ Greška pri kastovanju kolone {col}: {e}")
     # Registracija i kreiranje tabele
     con = duckdb.connect(DB_PATH)
     con.register("df_novi", df_all.to_pandas())
