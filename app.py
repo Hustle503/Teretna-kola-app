@@ -175,9 +175,15 @@ def load_parquet_files(folder: str) -> pl.DataFrame:
 # =========================
 # Preuzimanje TXT fajlova (opciono, ne kritično)
 # =========================
+# 📂 Folder za lokalne fajlove
+NOVI_UNOS_FOLDER = "novi_unos"
 os.makedirs(NOVI_UNOS_FOLDER, exist_ok=True)
+
+# 🔗 Google Drive folder
+NOVI_UNOS_FOLDER_ID = "1XQEUt3_TjM_lWahZHoZmlANExIwDwBW1"
 folder_url_txt = f"https://drive.google.com/drive/folders/{NOVI_UNOS_FOLDER_ID}"
 
+# 1️⃣ Pokušaj preuzimanje sa gdown
 try:
     import gdown
     st.info(f"⬇️ Pokušavam da preuzmem TXT fajlove iz foldera: {folder_url_txt}")
@@ -190,9 +196,17 @@ try:
     st.success("✅ Preuzimanje završeno ili fajlovi već postoje.")
 except Exception as e:
     st.warning(f"⚠️ Nije uspelo preuzimanje TXT fajlova: {e}")
-    # >>> važno: samo nastavi dalje, bez pada
+    # Samo preskoči, koristi lokalne fajlove
     pass
 
+# 2️⃣ Provera da li fajlovi postoje lokalno
+txt_files = glob.glob(os.path.join(NOVI_UNOS_FOLDER, "*.txt"))
+
+if not txt_files:
+    st.error("❌ Nema dostupnih TXT fajlova u folderu 'novi_unos'. Molim te da ih ručno ubaciš u taj folder.")
+    st.stop()   # 👉 zaustavi aplikaciju bez rušenja
+else:
+    st.success(f"📂 Pronađeno {len(txt_files)} TXT fajlova za obradu.")
 # =========================
 # Učitavanje Parquet fajlova → kola_sk
 # =========================
