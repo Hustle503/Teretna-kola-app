@@ -217,24 +217,31 @@ for col, t in pl_type_map.items():
 con = duckdb.connect(DB_PATH)
 con.register("df_novi", df_all.to_pandas())
 
-# 1️⃣ Obriši view i tabelu ako postoje
+# 1️⃣ Obriši stari view da se ne kosi
 con.execute("DROP VIEW IF EXISTS kola_sve")
-con.execute("DROP TABLE IF EXISTS novi_unosi")
 
-# 2️⃣ Kreiraj novu tabelu
+# 2️⃣ Obriši staru tabelu (ako postoji) i napravi novu
+con.execute("DROP TABLE IF EXISTS novi_unosi")
 con.execute("CREATE TABLE novi_unosi AS SELECT * FROM df_novi")
 
-# 3️⃣ Vrati view
-con.execute("""
-CREATE OR REPLACE VIEW kola_sve AS
-SELECT * FROM kola_sk
-UNION ALL
-SELECT * FROM novi_unosi
-""")
+# 3️⃣ Kreiraj view samo ako oba izvora postoje
+tables = [t[0] for t in con.execute("SHOW TABLES").fetchall()]
+if "kola_sk" in tables and "novi_unosi" in tables:
+    con.execute("""
+    CREATE VIEW kola_sve AS
+    SELECT * FROM kola_sk
+    UNION ALL
+    SELECT * FROM novi_unosi
+    """)
+elif "kola_sk" in tables:
+    # Ako nema novih unosa, view se pravi samo od glavne baze
+    con.execute("CREATE VIEW kola_sve AS SELECT * FROM kola_sk")
+elif "novi_unosi" in tables:
+    # Ako nema baze, ali ima novih unosa
+    con.execute("CREATE VIEW kola_sve AS SELECT * FROM novi_unosi")
 
 con.unregister("df_novi")
 con.close()
-
 # =========================
 # Kreiranje view kola_sve
 # =========================
