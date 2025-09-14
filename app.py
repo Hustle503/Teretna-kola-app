@@ -242,18 +242,7 @@ elif "novi_unosi" in tables:
 
 con.unregister("df_novi")
 con.close()
-# =========================
-# Kreiranje view kola_sve
-# =========================
-con = duckdb.connect(DB_PATH)
-con.execute("""
-CREATE OR REPLACE VIEW kola_sve AS
-SELECT * FROM kola
-UNION ALL
-SELECT * FROM novi_unosi
-""")
-con.close()
-st.success("✅ View 'kola_sve' je spreman za upotrebu")
+
 
 # =========================
 # Podrazumevana tabela/view
