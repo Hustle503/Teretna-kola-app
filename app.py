@@ -282,7 +282,6 @@ try:
         FROM stanje s
         JOIN "{table_name}" k
         ON CAST(s.SerijaIpodserija AS VARCHAR) = REPLACE(CAST(k.broj_kola_bez_rezima_i_kb AS VARCHAR), ' ', '')
-
     )
     SELECT * FROM ranked WHERE rn = 1
     """
