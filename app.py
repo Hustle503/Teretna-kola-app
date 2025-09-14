@@ -204,8 +204,8 @@ except Exception as e:
 txt_files = glob.glob(os.path.join(NOVI_UNOS_FOLDER, "*.txt"))
 
 if not txt_files:
-    st.error("❌ Nema dostupnih TXT fajlova u folderu 'novi_unos'. Molim te da ih ručno ubaciš u taj folder.")
-    st.stop()   # 👉 zaustavi aplikaciju bez rušenja
+    st.warning("⚠️ Nema dostupnih TXT fajlova u folderu 'novi_unos'. Ubaci ih ručno ili koristi Parquet fajlove ako postoje.")
+    df_all = pl.DataFrame()  # prazan DataFrame umesto da se aplikacija zaustavi
 else:
     st.success(f"📂 Pronađeno {len(txt_files)} TXT fajlova za obradu.")
 # =========================
