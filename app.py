@@ -261,11 +261,10 @@ def run_sql(db_file: str, sql: str) -> pd.DataFrame:
     return duckdb.sql(sql).fetchdf()
 
 def create_or_replace_table_from_df(db_file: str, table_name: str, df: pd.DataFrame):
-    con = duckdb.connect(db_file)
-    try:
-        con.register("df_tmp", df)
-        con.execute(f'CREATE OR REPLACE TABLE "{table_name}" AS SELECT * FROM df_tmp')
-        con.unregister("df_tmp")
+    con = duckdb.connect(db_file)  # možeš ovo ostaviti samo ako ti je potreban lokalni context
+    con.register("df_tmp", df)
+    con.execute(f'CREATE OR REPLACE TABLE "{table_name}" AS SELECT * FROM df_tmp')
+    con.unregister("df_tmp")
    
 # =========================
 # Prikaz poslednjih unosa
