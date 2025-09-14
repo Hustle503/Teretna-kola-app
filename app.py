@@ -199,6 +199,24 @@ except Exception as e:
     st.warning(f"⚠️ Nije učitana kola_sk tabela iz baze: {e}")
 
 # =========================
+# Registracija tabela iz baze
+# =========================
+try:
+    tables_in_db = [t[0] for t in con.execute("SHOW TABLES").fetchall()]
+    if "kola_sk" not in tables_in_db:
+        st.warning("⚠️ Tabela 'kola_sk' ne postoji u bazi, nastavljam samo sa TXT fajlovima.")
+except Exception as e:
+    st.warning(f"⚠️ Greška pri čitanju tabela iz baze: {e}")
+
+# =========================
+# Kreiranje tabele 'novi_unosi' iz TXT fajlova
+# =========================
+if not df_all.is_empty():
+    con.register("df_novi", df_all.to_pandas())
+    con.execute("DROP TABLE IF EXISTS novi_unosi")
+    con.execute("CREATE TABLE novi_unosi AS SELECT * FROM df_novi")
+
+# =========================
 # Kreiranje view-a kola_sve
 # =========================
 con.execute("DROP VIEW IF EXISTS kola_sve")
