@@ -193,7 +193,7 @@ if txt_files:
     df_all = pl.concat(dfs)
 
     # Sinkronizacija kolona sa tabelom kola
-   kola_info = con.execute("PRAGMA table_info('kola')").fetchdf()
+    kola_info = con.execute("PRAGMA table_info('kola')").fetchdf()
 
     cols = kola_info["name"].tolist()
     types = kola_info["type"].tolist()
