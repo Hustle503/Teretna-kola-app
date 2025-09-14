@@ -267,7 +267,6 @@ def create_or_replace_table_from_df(db_file: str, table_name: str, df: pd.DataFr
         con.execute(f'CREATE OR REPLACE TABLE "{table_name}" AS SELECT * FROM df_tmp')
         con.unregister("df_tmp")
    
-
 # =========================
 # Prikaz poslednjih unosa
 # =========================
