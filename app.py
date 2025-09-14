@@ -1,6 +1,5 @@
 import os
 import re
-import io
 import time
 import duckdb
 import hashlib
@@ -13,36 +12,10 @@ import gdown
 # =========================
 # Putevi i folderi
 # =========================
-DB_PATH = "kola_sk.db"
-FOLDER_ID = "1q__8P3gY-JMzqD5cpt8avm_7VAY-fHWI"
+DB_PATH = "kola_sk.db"   # više nam i ne treba .db.part
 NOVI_UNOS_FOLDER = "novi_unos"
 NOVI_UNOS_FOLDER_ID = "1XQEUt3_TjM_lWahZHoZmlANExIwDwBW1"
 HASH_FILE = "novi_unos_hash.json"
-
-# =========================
-# Merge part fajlova u jednu bazu
-# =========================
-def merge_parts():
-    part_files = []
-    for f in os.listdir("."):
-        m = re.match(r"(Copy of )?kola_sk\.db\.part(\d+)$", f)
-        if m:
-            part_files.append((int(m.group(2)), f))
-    part_files.sort(key=lambda x: x[0])
-    found_numbers = [num for num, _ in part_files]
-    expected_numbers = list(range(1, 49))
-    missing_numbers = [num for num in expected_numbers if num not in found_numbers]
-
-    if missing_numbers:
-        st.warning(f"❌ Nedostaju delovi: {missing_numbers}.")
-        return False
-
-    with open(DB_PATH, "wb") as outfile:
-        for _, fname in part_files:
-            with open(fname, "rb") as infile:
-                outfile.write(infile.read())
-    st.success(f"✅ Spojeno svih 48 delova → {DB_PATH}")
-    return True
 
 # =========================
 # DuckDB konekcija
@@ -85,7 +58,7 @@ def parse_txt(path) -> pl.DataFrame:
                 "tara": line[78:81].strip(),
                 "NetoTone": line[83:86].strip(),
                 "Broj vagona": line[0:12].strip(),
-                "Broj kola": line[1:11].strip(),
+                "Broj kola": line[2:11].strip(),
                 "source_file": os.path.basename(path),
             })
 
@@ -103,7 +76,7 @@ def parse_txt(path) -> pl.DataFrame:
     return df
 
 # =========================
-# Funkcije za hash fajlova
+# Hash funkcije
 # =========================
 def hash_file(path):
     h = hashlib.md5()
@@ -152,16 +125,52 @@ def load_novi_unosi():
     return pl.concat(dfs)
 
 # =========================
-# Preuzimanje part fajlova
+# Učitavanje Parquet fajlova
 # =========================
-folder_url_parts = f"https://drive.google.com/drive/folders/{FOLDER_ID}"
-st.info(f"⬇️ Preuzimam part fajlove iz foldera: {folder_url_parts}")
-try:
-    gdown.download_folder(url=folder_url_parts, output=".", quiet=False, use_cookies=False)
-except Exception:
-    st.warning("Part fajlovi možda su već preuzeti.")
+def load_parquet_files(folder: str) -> pl.DataFrame:
+    parquet_files = sorted([f for f in os.listdir(folder) if f.startswith("combined_") and f.endswith(".parquet")])
+    if not parquet_files:
+        st.warning("⚠️ Nema combined_00X.parquet fajlova!")
+        return pl.DataFrame()
 
-merge_parts()
+    dfs = [pl.read_parquet(os.path.join(folder, f)) for f in parquet_files]
+    df = pl.concat(dfs, rechunk=True)
+
+    # Ako su sirovi u jednoj koloni "line"
+    if df.shape[1] == 1:
+        col = df.columns[0]
+        rows = []
+        for line in df[col].to_list():
+            rows.append({
+                "Režim": line[0:2].strip(),
+                "Vlasnik": line[2:4].strip(),
+                "Serija": line[4:7].strip(),
+                "Inv br": line[7:11].strip(),
+                "KB": line[11:12].strip(),
+                "Tip kola": line[12:15].strip(),
+                "Voz br": line[15:20].strip(),
+                "Stanica": line[20:25].strip(),
+                "Status": line[25:27].strip(),
+                "Datum": line[27:35].strip(),
+                "Vreme": line[35:39].strip(),
+                "Roba": line[41:47].strip(),
+                "Reon": line[61:66].strip(),
+                "tara": line[78:81].strip(),
+                "NetoTone": line[83:86].strip(),
+                "Broj vagona": line[0:12].strip(),
+                "Broj kola": line[2:11].strip(),
+                "source_file": "parquet",
+            })
+        df = pl.DataFrame(rows)
+
+    df = df.with_columns([
+        pl.when(pl.col("Vreme") == "2400").then(pl.lit("0000")).otherwise(pl.col("Vreme")).alias("Vreme"),
+        (pl.col("Datum") + " " + pl.col("Vreme")).str.strptime(pl.Datetime, "%Y%m%d %H%M", strict=False).alias("DatumVreme"),
+        pl.col("tara").cast(pl.Int32, strict=False),
+        pl.col("NetoTone").cast(pl.Int32, strict=False),
+        pl.col("Inv br").cast(pl.Int32, strict=False),
+    ])
+    return df
 
 # =========================
 # Preuzimanje TXT fajlova
@@ -175,46 +184,24 @@ except Exception:
     st.warning("TXT fajlovi možda su već preuzeti.")
 
 # =========================
-# Učitavanje TXT fajlova
+# Učitavanje Parquet fajlova → kola_sk
+# =========================
+df_parquet = load_parquet_files(".")
+if not df_parquet.is_empty():
+    con.register("df_parquet", df_parquet.to_pandas())
+    con.execute("DROP TABLE IF EXISTS kola_sk")
+    con.execute("CREATE TABLE kola_sk AS SELECT * FROM df_parquet")
+    con.unregister("df_parquet")
+
+# =========================
+# Učitavanje TXT fajlova → novi_unosi
 # =========================
 df_all = load_novi_unosi()
 if not df_all.is_empty():
     con.register("df_novi", df_all.to_pandas())
     con.execute("DROP TABLE IF EXISTS novi_unosi")
     con.execute("CREATE TABLE novi_unosi AS SELECT * FROM df_novi")
-
-# =========================
-# Učitavanje originalne baze kola_sk.db u DuckDB
-# =========================
-try:
-    con.execute("DROP TABLE IF EXISTS kola_sk")
-    # Ako je SQLite DB, možemo samo učitati preko read_sqlite (ako DuckDB ima plugin) 
-    # Ako je DuckDB format, onda je dovoljno spojiti
-    # Pretpostavljamo da je DuckDB format
-    con.execute(f"ATTACH DATABASE '{DB_PATH}' AS source_db")
-    tables_in_source = [t[0] for t in con.execute("SHOW TABLES FROM source_db").fetchall()]
-    if "kola_sk" in tables_in_source:
-        con.execute("CREATE OR REPLACE TABLE kola_sk AS SELECT * FROM source_db.kola_sk")
-except Exception as e:
-    st.warning(f"⚠️ Nije učitana kola_sk tabela iz baze: {e}")
-
-# =========================
-# Registracija tabela iz baze
-# =========================
-try:
-    tables_in_db = [t[0] for t in con.execute("SHOW TABLES").fetchall()]
-    if "kola_sk" not in tables_in_db:
-        st.warning("⚠️ Tabela 'kola_sk' ne postoji u bazi, nastavljam samo sa TXT fajlovima.")
-except Exception as e:
-    st.warning(f"⚠️ Greška pri čitanju tabela iz baze: {e}")
-
-# =========================
-# Kreiranje tabele 'novi_unosi' iz TXT fajlova
-# =========================
-if not df_all.is_empty():
-    con.register("df_novi", df_all.to_pandas())
-    con.execute("DROP TABLE IF EXISTS novi_unosi")
-    con.execute("CREATE TABLE novi_unosi AS SELECT * FROM df_novi")
+    con.unregister("df_novi")
 
 # =========================
 # Kreiranje view-a kola_sve
@@ -242,7 +229,7 @@ DEFAULT_TABLE = "kola_sve"
 table_name = DEFAULT_TABLE
 
 # =========================
-# Naslov
+# Naslov + dalje tabovi (ostaju isti)
 # =========================
 st.title("🚃 Teretna kola SK — kontrolna tabla")
 
