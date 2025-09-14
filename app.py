@@ -229,21 +229,24 @@ con.execute("CREATE TABLE novi_unosi AS SELECT * FROM df_novi")
 
 # 3️⃣ Kreiraj view samo ako oba izvora postoje
 tables = [t[0] for t in con.execute("SHOW TABLES").fetchall()]
+views = [v[0] for v in con.execute("SHOW VIEWS").fetchall()]
+
 if "kola_sk" in tables and "novi_unosi" in tables:
+    con.execute("DROP VIEW IF EXISTS kola_sve")
     con.execute("""
-    CREATE VIEW kola_sve AS
-    SELECT * FROM kola_sk
-    UNION ALL
-    SELECT * FROM novi_unosi
+        CREATE VIEW kola_sve AS
+        SELECT * FROM kola_sk
+        UNION ALL
+        SELECT * FROM novi_unosi
     """)
 elif "kola_sk" in tables:
-    # Ako nema novih unosa, view se pravi samo od glavne baze
+    con.execute("DROP VIEW IF EXISTS kola_sve")
     con.execute("CREATE VIEW kola_sve AS SELECT * FROM kola_sk")
 elif "novi_unosi" in tables:
-    # Ako nema baze, ali ima novih unosa
+    con.execute("DROP VIEW IF EXISTS kola_sve")
     con.execute("CREATE VIEW kola_sve AS SELECT * FROM novi_unosi")
-
-con.unregister("df_novi")
+else:
+    st.warning("⚠️ Nema podataka za kreiranje view-a 'kola_sve'")
 
 # =========================
 # Podrazumevana tabela/view
@@ -257,8 +260,12 @@ except NameError:
 # =========================
 # Funkcije za rad sa bazom
 # =========================
-def run_sql(db_file: str, sql: str) -> pd.DataFrame:
-    return duckdb.sql(sql).fetchdf()
+def run_sql(sql: str) -> pd.DataFrame:
+    try:
+        return st.session_state.con.execute(sql).fetchdf()
+    except Exception as e:
+        st.error(f"Greška u upitu: {e}")
+        return pd.DataFrame()
 
 def create_or_replace_table_from_df(db_file: str, table_name: str, df: pd.DataFrame):
     con = duckdb.connect(db_file)  # možeš ovo ostaviti samo ako ti je potreban lokalni context
@@ -443,7 +450,10 @@ with tab5:
     st.subheader("📌 Poslednji unos za 4098 kola iz Excel tabele")
 
     if st.button("🔎 Prikaži poslednje unose"):
-        try:
+        tables = [t[0] for t in con.execute("SHOW TABLES").fetchall()]
+        if "stanje" not in tables:
+            st.warning("⚠️ Tabela 'stanje' ne postoji, poslednji unosi se ne mogu prikazati.")
+        else:
             q_last = f"""
                 WITH ranked AS (
                     SELECT 
@@ -461,18 +471,12 @@ with tab5:
                 FROM ranked
                 WHERE rn = 1
             """
-
-            df_last = run_sql(DB_PATH, q_last)
-
+            df_last = run_sql(q_last)
             if df_last.empty:
                 st.warning("⚠️ Nema pronađenih podataka.")
             else:
                 st.success(f"✅ Pronađeno {len(df_last)} poslednjih unosa.")
                 st.dataframe(df_last, use_container_width=True)
-
-        except Exception as e:
-            st.error(f"Greška u upitu: {e}")
-
 # ---------- Tab 6: Pretraga kola ----------
 with tab6:
     st.subheader("🔍 Pretraga kola po broju i periodu")
