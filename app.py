@@ -229,7 +229,10 @@ con.execute("CREATE TABLE novi_unosi AS SELECT * FROM df_novi")
 
 # 3️⃣ Kreiraj view samo ako oba izvora postoje
 tables = [t[0] for t in con.execute("SHOW TABLES").fetchall()]
-views = [v[0] for v in con.execute("SHOW VIEWS").fetchall()]
+try:
+    views = [v[0] for v in con.execute("SHOW VIEWS").fetchall()]
+except duckdb.CatalogException:
+    views = []
 
 if "kola_sk" in tables and "novi_unosi" in tables:
     con.execute("DROP VIEW IF EXISTS kola_sve")
