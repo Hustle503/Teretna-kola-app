@@ -214,17 +214,26 @@ for col, t in pl_type_map.items():
         df_all = df_all.with_columns(pl.col(col).cast(t))
 
     # Registracija i kreiranje tabele
-    con = duckdb.connect(DB_PATH)
-    con.register("df_novi", df_all.to_pandas())
-    con.execute("CREATE OR REPLACE TABLE novi_unosi AS SELECT * FROM df_novi")
-    con.unregister("df_novi")
-    con.close()
-    st.success(f"✅ Učitan {len(df_all)} redova iz {len(txt_files)} TXT fajlova u tabelu 'novi_unosi'")
-else:
-    con = duckdb.connect(DB_PATH)
-    con.execute("CREATE OR REPLACE TABLE novi_unosi AS SELECT * FROM kola WHERE FALSE")
-    con.close()
-    st.warning("⚠️ Nema pronađenih TXT fajlova u folderu 'novi_unos'.")
+   con = duckdb.connect(DB_PATH)
+con.register("df_novi", df_all.to_pandas())
+
+# 1️⃣ Obriši view i tabelu ako postoje
+con.execute("DROP VIEW IF EXISTS kola_sve")
+con.execute("DROP TABLE IF EXISTS novi_unosi")
+
+# 2️⃣ Kreiraj novu tabelu
+con.execute("CREATE TABLE novi_unosi AS SELECT * FROM df_novi")
+
+# 3️⃣ Vrati view
+con.execute("""
+CREATE OR REPLACE VIEW kola_sve AS
+SELECT * FROM kola_sk
+UNION ALL
+SELECT * FROM novi_unosi
+""")
+
+con.unregister("df_novi")
+con.close()
 
 # =========================
 # Kreiranje view kola_sve
