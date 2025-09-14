@@ -201,19 +201,17 @@ if txt_files:
 
     # Redosled kolona i konverzija tipova
     df_all = df_all[cols]
-    type_map = {
-        "Inv br": "Int64",
-        "tara": "Int64",
-        "NetoTone": "Int64",
-        "DatumVreme": "string",
-        "Datum_validan": "string"
-    }
-    for col, t in type_map.items():
-        if col in df_all.columns:
-            try:
-                df_all[col] = df_all[col].astype(t)
-            except Exception as e:
-                print(f"⚠️ Greška pri kastovanju kolone {col}: {e}")
+    pl_type_map = {
+    "Inv br": pl.Int64,
+    "tara": pl.Int64,
+    "NetoTone": pl.Int64,
+    "DatumVreme": pl.Datetime,
+    "Datum_validan": pl.Boolean
+}
+
+for col, t in pl_type_map.items():
+    if col in df_all.columns:
+        df_all = df_all.with_columns(pl.col(col).cast(t))
 
     # Registracija i kreiranje tabele
     con = duckdb.connect(DB_PATH)
