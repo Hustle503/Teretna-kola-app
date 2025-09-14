@@ -56,6 +56,22 @@ def merge_parts():
             with open(fname, "rb") as infile:
                 outfile.write(infile.read())
     st.success(f"✅ Spojeno svih 48 delova → {DB_PATH}")
+# =========================
+# Preuzimanje delova baze
+# =========================
+folder_url_parts = f"https://drive.google.com/drive/folders/{FOLDER_ID}?usp=sharing"
+st.info(f"⬇️ Preuzimam part fajlove iz foldera: {folder_url_parts}")
+try:
+    gdown.download_folder(url=folder_url_parts, output=".", quiet=False, use_cookies=False)
+except Exception as e:
+    st.warning(f"⚠️ Greška pri preuzimanju part fajlova: {e}. Ako su fajlovi već skinuti, pokušavam merge...")
+
+merge_parts()
+
+if not os.path.exists(DB_PATH):
+    st.error("❌ Baza nije napravljena! Proveri da li imaš svih 48 .part fajlova.")
+else:
+    st.success(f"✅ Spojena baza je napravljena: {DB_PATH}")
 
 # =========================
 # Funkcija za parsiranje TXT fajlova
@@ -152,44 +168,60 @@ def load_novi_unosi():
     return pl.concat(dfs)
 
 # =========================
-# Funkcije za rad sa bazom
+# Preuzimanje TXT fajlova
 # =========================
-def run_sql(db_file: str, sql: str) -> pd.DataFrame:
-    con = duckdb.connect(db_file, read_only=True)
-    try:
-        df = con.execute(sql).fetchdf()
-    finally:
-        con.close()
-    return df
-
-def create_or_replace_table_from_df(db_file: str, table_name: str, df: pd.DataFrame):
-    con = duckdb.connect(db_file)
-    try:
-        con.register("df_tmp", df)
-        con.execute(f'CREATE OR REPLACE TABLE "{table_name}" AS SELECT * FROM df_tmp')
-        con.unregister("df_tmp")
-    finally:
-        con.close()
-
-# =========================
-# Preuzimanje baze ako ne postoji
-# =========================
-folder_url_parts = f"https://drive.google.com/drive/folders/{FOLDER_ID}?usp=sharing"
-st.info(f"⬇️ Preuzimam part fajlove iz foldera: {folder_url_parts}")
+os.makedirs(NOVI_UNOS_FOLDER, exist_ok=True)
+folder_url = f"https://drive.google.com/drive/folders/{NOVI_UNOS_FOLDER_ID}"
+st.info(f"⬇️ Preuzimam TXT fajlove iz foldera: {folder_url}")
 try:
-    gdown.download_folder(url=folder_url_parts, output=".", quiet=False, use_cookies=False)
+    gdown.download_folder(url=folder_url, output=NOVI_UNOS_FOLDER, quiet=False, use_cookies=False)
+    st.success("✅ TXT fajlovi preuzeti")
 except Exception as e:
-    st.warning(f"⚠️ Greška pri preuzimanju part fajlova: {e}. Ako su fajlovi već skinuti, pokušavam merge...")
+    st.warning(f"⚠️ Greška pri preuzimanju TXT fajlova: {e}. Ako su fajlovi već skinuti, nastavljam...")
 
-merge_parts()
+txt_files = [os.path.join(NOVI_UNOS_FOLDER, f) for f in os.listdir(NOVI_UNOS_FOLDER) if f.endswith(".txt")]
 
-# =========================
-# Učitavanje TXT fajlova i kreiranje tabele novi_unosi
-# =========================
-df_all = load_novi_unosi()
-if not df_all.is_empty():
-    create_or_replace_table_from_df(DB_PATH, "novi_unosi", df_all.to_pandas())
-    st.success(f"✅ Učitano {len(df_all)} redova iz TXT fajlova u tabelu 'novi_unosi'")
+df_all = pl.DataFrame()
+if txt_files:
+    dfs = [parse_txt(f) for f in txt_files]
+    df_all = pl.concat(dfs)
+
+    # Sinkronizacija kolona sa tabelom kola
+    con = duckdb.connect(DB_PATH)
+    kola_info = con.execute("PRAGMA table_info('kola')").fetchdf()
+    con.close()
+
+    cols = kola_info["name"].tolist()
+    types = kola_info["type"].tolist()
+
+    # Dodaj nedostajuće kolone
+    for c in cols:
+        if c not in df_all.columns:
+            df_all = df_all.with_columns(pl.lit(None).alias(c))
+
+    # Redosled kolona i konverzija tipova
+    df_all = df_all[cols]
+    type_map = {
+        "Inv br": "Int64",
+        "tara": "Int64",
+        "NetoTone": "Int64",
+        "DatumVreme": "string",
+        "Datum_validan": "string"
+    }
+    for col, t in type_map.items():
+        if col in df_all.columns:
+            try:
+                df_all[col] = df_all[col].astype(t)
+            except Exception as e:
+                print(f"⚠️ Greška pri kastovanju kolone {col}: {e}")
+
+    # Registracija i kreiranje tabele
+    con = duckdb.connect(DB_PATH)
+    con.register("df_novi", df_all.to_pandas())
+    con.execute("CREATE OR REPLACE TABLE novi_unosi AS SELECT * FROM df_novi")
+    con.unregister("df_novi")
+    con.close()
+    st.success(f"✅ Učitan {len(df_all)} redova iz {len(txt_files)} TXT fajlova u tabelu 'novi_unosi'")
 else:
     con = duckdb.connect(DB_PATH)
     con.execute("CREATE OR REPLACE TABLE novi_unosi AS SELECT * FROM kola WHERE FALSE")
@@ -201,16 +233,17 @@ else:
 # =========================
 con = duckdb.connect(DB_PATH)
 con.execute("""
-    CREATE OR REPLACE VIEW kola_sve AS
-    SELECT * FROM kola
-    UNION ALL
-    SELECT * FROM novi_unosi
+CREATE OR REPLACE VIEW kola_sve AS
+SELECT * FROM kola
+UNION ALL
+SELECT * FROM novi_unosi
 """)
 con.close()
 st.success("✅ View 'kola_sve' je spreman za upotrebu")
 
 # =========================
-# ✅ Definišemo podrazumevanu tabelu/view
+# Podrazumevana tabela/view
+# =========================
 DEFAULT_TABLE = "kola_sve"
 try:
     table_name
@@ -238,9 +271,30 @@ def create_or_replace_table_from_df(db_file: str, table_name: str, df: pd.DataFr
         con.close()
 
 # =========================
-# Ovde ide ostatak tvog sidebar-a, SQL upiti i prikaz podataka
-# (tvoji prethodni kodovi za sidebar, poslednje unose, kola_sve view itd.)
+# Prikaz poslednjih unosa
 # =========================
+try:
+    q_last = f"""
+    WITH ranked AS (
+        SELECT s.SerijaIpodserija, k.*,
+        ROW_NUMBER() OVER (
+            PARTITION BY s.SerijaIpodserija
+            ORDER BY k.DatumVreme DESC
+        ) AS rn
+        FROM stanje s
+        JOIN "{table_name}" k
+        ON CAST(s.SerijaIpodserija AS TEXT) = REPLACE(k.broj_kola_bez_rezima_i_kb, ' ', '')
+    )
+    SELECT * FROM ranked WHERE rn = 1
+    """
+    df_last = run_sql(DB_PATH, q_last)
+    if df_last.empty:
+        st.warning("⚠️ Nema pronađenih podataka.")
+    else:
+        st.success(f"✅ Pronađeno {len(df_last)} poslednjih unosa.")
+        st.dataframe(df_last, use_container_width=True)
+except Exception as e:
+    st.error(f"Greška u upitu: {e}")
 
 # =========================
 # Glavni naslov i tabovi
