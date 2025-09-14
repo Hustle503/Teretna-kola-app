@@ -203,11 +203,25 @@ except Exception as e:
 # 2️⃣ Provera da li fajlovi postoje lokalno
 txt_files = glob.glob(os.path.join(NOVI_UNOS_FOLDER, "*.txt"))
 
-if not txt_files:
-    st.warning("⚠️ Nema dostupnih TXT fajlova u folderu 'novi_unos'. Ubaci ih ručno ili koristi Parquet fajlove ako postoje.")
-    df_all = pl.DataFrame()  # prazan DataFrame umesto da se aplikacija zaustavi
-else:
+if txt_files:
     st.success(f"📂 Pronađeno {len(txt_files)} TXT fajlova za obradu.")
+    # 👉 ovde ubacuješ kod za čitanje TXT fajlova u DataFrame
+    # primer:
+    # df_list = [pl.read_csv(f, separator="|") for f in txt_files]
+    # df_all = pl.concat(df_list)
+else:
+    st.warning("⚠️ Nema dostupnih TXT fajlova u folderu 'novi_unos'. Pokušavam sa Parquet fajlovima...")
+
+    parquet_files = glob.glob(os.path.join(NOVI_UNOS_FOLDER, "*.parquet"))
+
+    if parquet_files:
+        st.success(f"📂 Pronađeno {len(parquet_files)} Parquet fajlova za obradu.")
+        # učitaj sve parquet fajlove
+        df_list = [pl.read_parquet(f) for f in parquet_files]
+        df_all = pl.concat(df_list)
+    else:
+        st.warning("⚠️ Nema ni Parquet fajlova – nastavljam sa praznim DataFrame.")
+        df_all = pl.DataFrame()  # prazan, da ne puca
 # =========================
 # Učitavanje Parquet fajlova → kola_sk
 # =========================
