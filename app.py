@@ -193,9 +193,7 @@ if txt_files:
     df_all = pl.concat(dfs)
 
     # Sinkronizacija kolona sa tabelom kola
-    con = duckdb.connect(DB_PATH)
-    kola_info = con.execute("PRAGMA table_info('kola')").fetchdf()
-    con.close()
+   kola_info = con.execute("PRAGMA table_info('kola')").fetchdf()
 
     cols = kola_info["name"].tolist()
     types = kola_info["type"].tolist()
@@ -220,7 +218,6 @@ for col, t in pl_type_map.items():
         df_all = df_all.with_columns(pl.col(col).cast(t))
 
     # Registracija i kreiranje tabele
-con = duckdb.connect(DB_PATH)
 con.register("df_novi", df_all.to_pandas())
 
 # 1️⃣ Obriši stari view da se ne kosi
@@ -247,8 +244,6 @@ elif "novi_unosi" in tables:
     con.execute("CREATE VIEW kola_sve AS SELECT * FROM novi_unosi")
 
 con.unregister("df_novi")
-con.close()
-
 
 # =========================
 # Podrazumevana tabela/view
@@ -266,8 +261,7 @@ def run_sql(db_file: str, sql: str) -> pd.DataFrame:
     con = duckdb.connect(db_file, read_only=True)
     try:
         df = con.execute(sql).fetchdf()
-    finally:
-        con.close()
+   
     return df
 
 def create_or_replace_table_from_df(db_file: str, table_name: str, df: pd.DataFrame):
@@ -276,8 +270,7 @@ def create_or_replace_table_from_df(db_file: str, table_name: str, df: pd.DataFr
         con.register("df_tmp", df)
         con.execute(f'CREATE OR REPLACE TABLE "{table_name}" AS SELECT * FROM df_tmp')
         con.unregister("df_tmp")
-    finally:
-        con.close()
+   
 
 # =========================
 # Prikaz poslednjih unosa
