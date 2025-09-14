@@ -214,7 +214,7 @@ for col, t in pl_type_map.items():
         df_all = df_all.with_columns(pl.col(col).cast(t))
 
     # Registracija i kreiranje tabele
-   con = duckdb.connect(DB_PATH)
+con = duckdb.connect(DB_PATH)
 con.register("df_novi", df_all.to_pandas())
 
 # 1️⃣ Obriši view i tabelu ako postoje
