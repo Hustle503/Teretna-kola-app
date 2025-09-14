@@ -187,7 +187,7 @@ except Exception:
 # Učitavanje Parquet fajlova → kola_sk
 # =========================
 df_parquet = load_parquet_files(".")
-if not df_parquet.is_empty():
+if df_parquet.height > 0:
     con.register("df_parquet", df_parquet.to_pandas())
     con.execute("DROP TABLE IF EXISTS kola_sk")
     con.execute("CREATE TABLE kola_sk AS SELECT * FROM df_parquet")
@@ -197,7 +197,7 @@ if not df_parquet.is_empty():
 # Učitavanje TXT fajlova → novi_unosi
 # =========================
 df_all = load_novi_unosi()
-if not df_all.is_empty():
+if df_all.height > 0:
     con.register("df_novi", df_all.to_pandas())
     con.execute("DROP TABLE IF EXISTS novi_unosi")
     con.execute("CREATE TABLE novi_unosi AS SELECT * FROM df_novi")
