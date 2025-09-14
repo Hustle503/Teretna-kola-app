@@ -319,14 +319,13 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
 with tab1:
     col_a, col_b, col_c, col_d = st.columns(4)
     try:
-        df_cnt = run_sql(DB_PATH, f'SELECT COUNT(*) AS broj_redova FROM "{table_name}"')
+        df_cnt = run_sql(f'SELECT COUNT(*) AS broj_redova FROM "{table_name}"')
         col_a.metric("Ukupan broj redova", f"{int(df_cnt['broj_redova'][0]):,}".replace(",", "."))
 
-        df_files = run_sql(DB_PATH, f'SELECT COUNT(DISTINCT source_file) AS fajlova FROM "{table_name}"')
+        df_files = run_sql(f'SELECT COUNT(DISTINCT source_file) AS fajlova FROM "{table_name}"')
         col_b.metric("Učitanih fajlova", int(df_files["fajlova"][0]))
 
         df_range = run_sql(
-            DB_PATH,
             f'''
             SELECT
               MIN(DatumVreme) AS min_dt,
@@ -343,7 +342,6 @@ with tab1:
         st.divider()
         st.subheader("Učitanih redova po fajlu (top 20)")
         df_by_file = run_sql(
-            DB_PATH,
             f'''
             SELECT source_file, COUNT(*) AS broj
             FROM "{table_name}"
@@ -370,7 +368,7 @@ with tab2:
         GROUP BY 1
         ORDER BY 1
     """
-    df_month = run_sql(DB_PATH, q_month)
+    df_month = run_sql(q_month)
     st.line_chart(df_month.set_index("mesec")["ukupno_tona"])
 
     st.subheader("Top 20 stanica po broju vagona")
@@ -381,7 +379,7 @@ with tab2:
         ORDER BY broj DESC
         LIMIT 20
     """
-    df_sta = run_sql(DB_PATH, q_sta)
+    df_sta = run_sql(q_sta)
     st.bar_chart(df_sta.set_index("Stanica")["broj"])
 
     c1, c2 = st.columns(2)
@@ -394,7 +392,7 @@ with tab2:
             ORDER BY prosek_tona DESC
             LIMIT 20
         """
-        df_tip = run_sql(DB_PATH, q_tip)
+        df_tip = run_sql(q_tip)
         st.dataframe(df_tip, use_container_width=True)
     with c2:
         st.subheader("Prosečna tara po tipu kola")
@@ -405,7 +403,7 @@ with tab2:
             ORDER BY prosek_tare DESC
             LIMIT 20
         """
-        df_tara = run_sql(DB_PATH, q_tara)
+        df_tara = run_sql(q_tara)
         st.dataframe(df_tara, use_container_width=True)
 
 # ---------- Tab 3: SQL upiti ----------
@@ -418,7 +416,7 @@ with tab3:
     if run_btn:
         t0 = time.time()
         try:
-            df_user = run_sql(DB_PATH, user_sql)
+            df_user = run_sql(user_sql)
             elapsed = time.time() - t0
             st.success(f"OK ({elapsed:.2f}s) — {len(df_user):,} redova".replace(",", "."))
             st.dataframe(df_user, use_container_width=True)
@@ -500,7 +498,7 @@ with tab6:
                   AND "DatumVreme" BETWEEN '{start_date}' AND '{end_date}'
                 ORDER BY "DatumVreme" DESC
             """
-            df_search = run_sql(DB_PATH, q_search)
+            df_search = run_sql(q_search)
 
             if df_search.empty:
                 st.warning("⚠️ Nema podataka za zadate kriterijume.")
@@ -521,7 +519,7 @@ with tab7:
             ORDER BY broj DESC
             LIMIT 50
         """
-        df_sta_count = run_sql(DB_PATH, q_sta_count)
+        df_sta_count = run_sql(q_sta_count)
         st.bar_chart(df_sta_count.set_index("Stanica")["broj"])
         st.dataframe(df_sta_count, use_container_width=True)
     except Exception as e:
@@ -538,7 +536,7 @@ with tab8:
             ORDER BY "Broj kola", "DatumVreme"
             LIMIT 500
         """
-        df_tip0 = run_sql(DB_PATH, q_tip0)
+        df_tip0 = run_sql(q_tip0)
         st.dataframe(df_tip0, use_container_width=True)
     except Exception as e:
         st.error(f"Greška u Tab 8: {e}")
@@ -554,7 +552,7 @@ with tab9:
             ORDER BY "Broj kola", "DatumVreme"
             LIMIT 500
         """
-        df_tip1 = run_sql(DB_PATH, q_tip1)
+        df_tip1 = run_sql(q_tip1)
         st.dataframe(df_tip1, use_container_width=True)
     except Exception as e:
         st.error(f"Greška u Tab 9: {e}")
@@ -570,7 +568,7 @@ with tab10:
             ORDER BY broj DESC
             LIMIT 50
         """
-        df_serije = run_sql(DB_PATH, q_serije)
+        df_serije = run_sql(q_serije)
         st.bar_chart(df_serije.set_index("Serija")["broj"])
         st.dataframe(df_serije, use_container_width=True)
     except Exception as e:
