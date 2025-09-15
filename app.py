@@ -1,8 +1,6 @@
-import os
-import glob
-import time
-import pandas as pd
+import duckdb
 import streamlit as st
+import os
 
 # -------------------------
 # Podesavanja
@@ -12,96 +10,83 @@ EXCEL_STANJE = r"C:\Teretna kola\stanje.xlsx"
 EXCEL_STANICE = r"C:\Teretna kola\stanice.xlsx"
 
 # -------------------------
-# Učitavanje podataka
+# DuckDB konekcija
 # -------------------------
-@st.cache_data(show_spinner=False)
-def load_parquet_data(folder: str) -> pd.DataFrame:
-    """Učitaj sve parquet fajlove iz foldera i spoji u jedan DataFrame"""
-    files = sorted(glob.glob(os.path.join(folder, "*.parquet")))
-    if not files:
-        return pd.DataFrame()
-    df_list = [pd.read_parquet(f) for f in files]
-    df = pd.concat(df_list, ignore_index=True)
-    return df
+@st.cache_resource
+def get_connection():
+    con = duckdb.connect()
+    # registruj parquet folder kao tabelu
+    con.execute(f"""
+        CREATE OR REPLACE VIEW kola AS
+        SELECT * FROM read_parquet('{PARQUET_FOLDER}/*.parquet')
+    """)
+    return con
 
-@st.cache_data(show_spinner=False)
-def load_excel_data(path: str) -> pd.DataFrame:
-    if os.path.exists(path):
-        return pd.read_excel(path)
-    return pd.DataFrame()
-
-# Učitaj glavne podatke
-df_kola = load_parquet_data(PARQUET_FOLDER)
-df_stanje = load_excel_data(EXCEL_STANJE)
-df_stanice = load_excel_data(EXCEL_STANICE)
+con = get_connection()
 
 # -------------------------
 # Streamlit UI
 # -------------------------
 st.set_page_config(layout="wide")
-st.title("🚂 Teretna kola SK — kontrolna tabla (Parquet verzija)")
+st.title("🚂 Teretna kola SK — Parquet + DuckDB")
 
 st.sidebar.title("⚙️ Podešavanja")
-st.sidebar.write(f"📂 Učitano redova: {len(df_kola):,}".replace(",", "."))
+
+# koliko redova ima ukupno
+try:
+    total_rows = con.execute("SELECT COUNT(*) FROM kola").fetchone()[0]
+    st.sidebar.write(f"📂 Ukupan broj redova: {total_rows:,}".replace(",", "."))
+except Exception as e:
+    st.sidebar.error(f"Greška pri učitavanju: {e}")
+    st.stop()
 
 # -------------------------
 # Tabovi
 # -------------------------
-tab1, tab2, tab3, tab4 = st.tabs([
-    "📊 Pregled", "📈 Izveštaji", "🗂 Excel baze", "🔎 Ad-hoc upiti"
+tab1, tab2, tab3 = st.tabs([
+    "📊 Pregled", "📈 Izveštaji", "🔎 Ad-hoc SQL"
 ])
 
 # --- Tab 1: Pregled ---
 with tab1:
-    if df_kola.empty:
-        st.warning("⚠️ Nema podataka u Parquet folderu.")
-    else:
-        st.metric("Ukupan broj redova", f"{len(df_kola):,}".replace(",", "."))
-        st.dataframe(df_kola.head(100), use_container_width=True)
+    st.subheader("Prvih 100 redova iz baze")
+    df_head = con.execute("SELECT * FROM kola LIMIT 100").df()
+    st.dataframe(df_head, use_container_width=True)
 
 # --- Tab 2: Izveštaji ---
 with tab2:
-    if not df_kola.empty:
-        st.subheader("Suma NetoTone po mesecu")
-        if "DatumVreme" in df_kola.columns:
-            df_kola["mesec"] = pd.to_datetime(df_kola["DatumVreme"]).dt.to_period("M")
-            df_month = df_kola.groupby("mesec")["NetoTone"].sum().reset_index()
-            st.line_chart(df_month.set_index("mesec")["NetoTone"])
+    st.subheader("Suma NetoTone po mesecu")
+    try:
+        df_month = con.execute("""
+            SELECT DATE_TRUNC('month', CAST(DatumVreme AS TIMESTAMP)) AS mesec,
+                   SUM(NetoTone) AS suma
+            FROM kola
+            GROUP BY 1
+            ORDER BY 1
+        """).df()
+        st.line_chart(df_month.set_index("mesec")["suma"])
+    except Exception as e:
+        st.warning(f"Nema kolone DatumVreme ili NetoTone ({e})")
 
-        st.subheader("Top 20 stanica po broju vagona")
-        if "Stanica" in df_kola.columns:
-            df_sta = (
-                df_kola.groupby("Stanica")
-                .size()
-                .reset_index(name="broj")
-                .sort_values("broj", ascending=False)
-                .head(20)
-            )
-            st.bar_chart(df_sta.set_index("Stanica")["broj"])
+    st.subheader("Top 20 stanica po broju vagona")
+    try:
+        df_sta = con.execute("""
+            SELECT Stanica, COUNT(*) AS broj
+            FROM kola
+            GROUP BY Stanica
+            ORDER BY broj DESC
+            LIMIT 20
+        """).df()
+        st.bar_chart(df_sta.set_index("Stanica")["broj"])
+    except Exception as e:
+        st.warning(f"Nema kolone Stanica ({e})")
 
-# --- Tab 3: Excel baze ---
+# --- Tab 3: Ad-hoc SQL ---
 with tab3:
-    st.subheader("Stanje.xlsx")
-    if df_stanje.empty:
-        st.info("📂 Nema fajla stanje.xlsx")
-    else:
-        st.dataframe(df_stanje.head(50), use_container_width=True)
-
-    st.subheader("Stanice.xlsx")
-    if df_stanice.empty:
-        st.info("📂 Nema fajla stanice.xlsx")
-    else:
-        st.dataframe(df_stanice.head(50), use_container_width=True)
-
-# --- Tab 4: Ad-hoc upiti ---
-with tab4:
-    st.subheader("SQL upit nad Parquet podacima (DuckDB in-memory)")
-
-    import duckdb
-    con = duckdb.connect()
-    con.register("kola", df_kola)
-
-    query = st.text_area("Unesi SQL upit", "SELECT Stanica, COUNT(*) AS n FROM kola GROUP BY Stanica ORDER BY n DESC LIMIT 10")
+    st.subheader("SQL upit nad Parquet podacima")
+    query = st.text_area("Unesi SQL upit", 
+        "SELECT Stanica, COUNT(*) AS n FROM kola GROUP BY Stanica ORDER BY n DESC LIMIT 10"
+    )
     if st.button("Pokreni upit"):
         try:
             result = con.execute(query).df()
