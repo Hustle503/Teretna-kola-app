@@ -207,7 +207,7 @@ def load_data():
     if os.path.exists("merged_from_txt.parquet"):
         st.info("📂 Učitavam podatke iz merged_from_txt.parquet (cache)")
         return pl.read_parquet("merged_from_txt.parquet")
-
+        
     # 3️⃣ Ako nema cache, pokušaj sve ostale parquet fajlove u repo
     parquet_files = glob.glob("*.parquet")
     if parquet_files:
@@ -220,16 +220,20 @@ def load_data():
                 df_list.append(df)
             except Exception as e:
                 st.error(f"❌ Greška pri čitanju {f}: {e}")
+
+        # pokušaj spajanja samo ako ima učitanih fajlova
+        if df_list:
+            try:
+                df = pl.concat(df_list, how="diagonal")  # "diagonal" dozvoljava različite kolone
+                st.success(f"📊 Spojeno ukupno {len(df)} redova iz {len(df_list)} fajlova.")
+            except Exception as e:
+                 st.error(f"💥 Greška pri spajanju fajlova: {e}")
+        else:
+            st.warning("⚠️ Nijedan Parquet fajl nije uspešno učitan.")
     else:
         st.warning("⚠️ Nema Parquet fajlova u repo-u.")
-    if df_list:
-        try:
-            return pl.concat(df_list, how="diagonal_relaxed")  # fleksibilno spajanje
-        except Exception as e:
-            st.error(f"❌ Greška pri spajanju fajlova: {e}")
-            return df_list[0]  # vrati bar prvi uspešan
-    else:
-        return pl.DataFrame()
+
+    
    # 4️⃣ Ako nema ništa, vrati prazan DF
     st.warning("⚠️ Nema dostupnih TXT ni Parquet fajlova – vraćam prazan DataFrame.")
     return pl.DataFrame()
