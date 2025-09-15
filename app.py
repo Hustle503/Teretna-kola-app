@@ -8,23 +8,10 @@ import streamlit as st
 import requests
 
 # --- Fiksna glavna baza (Google Drive) ---
-DB_URL = "https://drive.google.com/uc?export=download&id=1SbaxHotQ0BlNxts5f7tawLIQoWNu-hCG"
-MAIN_DB = "kola_sk.db"       # glavna fiksna baza
-UPDATE_DB = "kola_sk_update.db"  # lokalna baza za update
-
-# ---------- Preuzimanje glavne baze ----------
-if not os.path.exists(MAIN_DB):
-    with st.spinner("⬇ Preuzimam glavnu bazu sa Google Drive-a..."):
-        r = requests.get(DB_URL, stream=True)
-        r.raise_for_status()
-        with open(MAIN_DB, "wb") as f:
-            for chunk in r.iter_content(chunk_size=8192):
-                f.write(chunk)
-    st.success("✅ Glavna baza uspešno preuzeta sa Google Drive-a!")
+DB_FILE = "kola_sk.db" STATE_FILE = "loaded_files.json"
 
 # ---------- Putanja do baze ----------
-db_path = os.path.abspath(MAIN_DB)
-
+DB_PATH = r"C:\Teretna kola\kola.duckdb"
 # ---------- Helperi ----------
 @st.cache_data(show_spinner=False)
 def get_tables(db_path: str):
