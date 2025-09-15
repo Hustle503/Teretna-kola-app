@@ -202,41 +202,34 @@ def load_data():
             st.info("💾 Podaci iz TXT fajlova sačuvani u merged_from_txt.parquet")
             return df_all
 
-    # 2️⃣ Ako nema TXT, probaj cache
+    # 2️⃣ Cache TXT
     if os.path.exists("merged_from_txt.parquet"):
         st.info("📂 Učitavam podatke iz merged_from_txt.parquet (cache)")
         return pl.read_parquet("merged_from_txt.parquet")
 
-    # 3️⃣ Ako nema cache, probaj sve ostale parquet fajlove
+    # 3️⃣ Svi Parquet fajlovi
     parquet_files = glob.glob("*.parquet")
     if parquet_files:
         st.success(f"📂 Pronađeno {len(parquet_files)} Parquet fajlova u repo-u.")
 
-        merged_file = "merged_all.parquet"
-        if not os.path.exists(merged_file):
-            st.info("🔄 Spajam sve Parquet fajlove u jedan (streaming način)...")
-            for i, f in enumerate(parquet_files):
-                try:
-                    df = pl.read_parquet(f)
-                    st.write(f"✅ {f} učitan ({df.height} redova)")
-                    if i == 0:
-                        df.write_parquet(merged_file)
-                    else:
-                        df.write_parquet(merged_file, mode="append")
-                except Exception as e:
-                    st.error(f"❌ Greška pri čitanju {f}: {e}")
-            st.success(f"💾 Svi fajlovi spojeni u {merged_file}")
+        df_list = []
+        for f in parquet_files:
+            try:
+                df = pl.read_parquet(f)
+                st.write(f"✅ {f} učitan ({df.height} redova)")
+                df_list.append(df)
+            except Exception as e:
+                st.error(f"❌ Greška pri čitanju {f}: {e}")
 
-        st.info("📂 Učitavam podatke iz merged_all.parquet")
-        return pl.read_parquet(merged_file)
+        if df_list:
+            df_all = pl.concat(df_list, rechunk=True)
+            df_all.write_parquet("merged_all.parquet")
+            st.success(f"💾 Svi fajlovi spojeni i sačuvani u merged_all.parquet")
+            return df_all
 
     # 4️⃣ Ako nema ništa
     st.warning("⚠️ Nema dostupnih TXT ni Parquet fajlova – vraćam prazan DataFrame.")
     return pl.DataFrame()
-
-
-# 👉 Ovde pozivaš
-df_all = load_data()
 # =========================
 # Učitavanje Parquet fajlova → kola_sk
 # =========================
