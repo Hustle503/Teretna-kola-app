@@ -52,7 +52,7 @@ def run_sql(sql: str) -> pd.DataFrame:
 st.sidebar.title("⚙️ Podešavanja")
 db_path = st.sidebar.text_input(
     "Putanja do DuckDB baze (.db)",
-    value = os.path.abspath(MAIN_DB)
+    value = os.path.abspath(DB_FILE)
 )
 
 folder_path = st.sidebar.text_input(
