@@ -135,6 +135,7 @@ def load_parquet_files(folder: str) -> pl.DataFrame:
         return pl.DataFrame()
 
     dfs = [pl.read_parquet(os.path.join(folder, f)) for f in parquet_files]
+    st.write("Pronađeni Parquet fajlovi:", parquet_files)
     df = pl.concat(dfs, rechunk=True)
 
     # Ako su sirovi u jednoj koloni "line"
@@ -211,10 +212,25 @@ def load_data():
     parquet_files = glob.glob("*.parquet")
     if parquet_files:
         st.success(f"📂 Pronađeno {len(parquet_files)} Parquet fajlova u repo-u.")
-        df_list = [pl.read_parquet(f) for f in parquet_files]
-        return pl.concat(df_list)
-
-    # 4️⃣ Ako nema ništa, vrati prazan DF
+        df_list = []
+        for f in parquet_files:
+            try:
+                df = pl.read_parquet(f)
+                st.write(f"✅ {f} učitan, kolone: {df.columns}")
+                df_list.append(df)
+            except Exception as e:
+                st.error(f"❌ Greška pri čitanju {f}: {e}")
+    else:
+        st.warning("⚠️ Nema Parquet fajlova u repo-u.")
+    if df_list:
+        try:
+            return pl.concat(df_list, how="diagonal_relaxed")  # fleksibilno spajanje
+        except Exception as e:
+            st.error(f"❌ Greška pri spajanju fajlova: {e}")
+            return df_list[0]  # vrati bar prvi uspešan
+    else:
+        return pl.DataFrame()
+   # 4️⃣ Ako nema ništa, vrati prazan DF
     st.warning("⚠️ Nema dostupnih TXT ni Parquet fajlova – vraćam prazan DataFrame.")
     return pl.DataFrame()
 
