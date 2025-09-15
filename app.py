@@ -179,11 +179,9 @@ def load_parquet_files(folder: str) -> pl.DataFrame:
 # =========================
 # 📂 Učitavanje podataka (TXT → cache → parquet → prazan)
 def load_data():
-    NOVI_UNOS_FOLDER = "novi_unos"
     os.makedirs(NOVI_UNOS_FOLDER, exist_ok=True)
 
-    # 🔗 Google Drive folder (samo za info, ne koristi se ovde direktno)
-    NOVI_UNOS_FOLDER_ID = "1XQEUt3_TjM_lWahZHoZmlANExIwDwBW1"
+    # 🔗 Google Drive folder (samo za info)
     folder_url_txt = f"https://drive.google.com/drive/folders/{NOVI_UNOS_FOLDER_ID}"
 
     # 1️⃣ TXT fajlovi
@@ -197,7 +195,7 @@ def load_data():
             except Exception as e:
                 st.error(f"❌ Greška pri parsiranju {f}: {e}")
         if df_list:
-            df_all = pl.concat(df_list)
+            df_all = pl.concat(df_list, rechunk=True)
             df_all.write_parquet("merged_from_txt.parquet")
             st.info("💾 Podaci iz TXT fajlova sačuvani u merged_from_txt.parquet")
             return df_all
@@ -213,23 +211,55 @@ def load_data():
         st.success(f"📂 Pronađeno {len(parquet_files)} Parquet fajlova u repo-u.")
 
         df_list = []
+        total_rows = 0
         for f in parquet_files:
             try:
                 df = pl.read_parquet(f)
+                total_rows += df.height
                 st.write(f"✅ {f} učitan ({df.height} redova)")
+
+                # Ako je samo jedna kolona raw_line, parsiraj je
+                if df.shape[1] == 1:
+                    col = df.columns[0]
+                    rows = []
+                    for line in df[col].to_list():
+                        rows.append({
+                            "Režim": line[0:2].strip(),
+                            "Vlasnik": line[2:4].strip(),
+                            "Serija": line[4:7].strip(),
+                            "Inv br": line[7:11].strip(),
+                            "KB": line[11:12].strip(),
+                            "Tip kola": line[12:15].strip(),
+                            "Voz br": line[15:20].strip(),
+                            "Stanica": line[20:25].strip(),
+                            "Status": line[25:27].strip(),
+                            "Datum": line[27:35].strip(),
+                            "Vreme": line[35:39].strip(),
+                            "Roba": line[41:47].strip(),
+                            "Reon": line[61:66].strip(),
+                            "tara": line[78:81].strip(),
+                            "NetoTone": line[83:86].strip(),
+                            "Broj vagona": line[0:12].strip(),
+                            "Broj kola": line[2:11].strip(),
+                            "source_file": f,
+                        })
+                    df = pl.DataFrame(rows)
+
                 df_list.append(df)
             except Exception as e:
                 st.error(f"❌ Greška pri čitanju {f}: {e}")
 
         if df_list:
+            st.info("🔄 Spajam sve Parquet fajlove u jedan (streaming način)...")
             df_all = pl.concat(df_list, rechunk=True)
+            st.success(f"💾 Svi fajlovi spojeni ({total_rows:,} redova) i sačuvani u merged_all.parquet".replace(",", "."))
             df_all.write_parquet("merged_all.parquet")
-            st.success(f"💾 Svi fajlovi spojeni i sačuvani u merged_all.parquet")
             return df_all
 
     # 4️⃣ Ako nema ništa
     st.warning("⚠️ Nema dostupnih TXT ni Parquet fajlova – vraćam prazan DataFrame.")
     return pl.DataFrame()
+
 # =========================
 # Učitavanje Parquet fajlova → kola_sk
 # =========================
