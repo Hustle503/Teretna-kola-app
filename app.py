@@ -216,23 +216,24 @@ def load_data():
         for f in parquet_files:
             try:
                 df = pl.read_parquet(f)
-                st.write(f"✅ {f} učitan, kolone: {df.columns}")
+                st.write(f"✅ {f} učitan, kolone: {df.columns}, redova: {df.height}")
                 df_list.append(df)
             except Exception as e:
                 st.error(f"❌ Greška pri čitanju {f}: {e}")
 
-        # pokušaj spajanja samo ako ima učitanih fajlova
+        # Izbaci prazne fajlove
+        df_list = [df for df in df_list if df.height > 0]
+
         if df_list:
             try:
-                df = pl.concat(df_list, how="diagonal")  # "diagonal" dozvoljava različite kolone
-                st.success(f"📊 Spojeno ukupno {len(df)} redova iz {len(df_list)} fajlova.")
+                df = pl.concat(df_list, how="vertical")
+                st.success(f"📊 Spojeno ukupno {df.height} redova iz {len(df_list)} fajlova.")
+                st.write(df.head())
+                return df
             except Exception as e:
-                 st.error(f"💥 Greška pri spajanju fajlova: {e}")
+                st.error(f"💥 Greška pri spajanju fajlova: {e}")
         else:
-            st.warning("⚠️ Nijedan Parquet fajl nije uspešno učitan.")
-    else:
-        st.warning("⚠️ Nema Parquet fajlova u repo-u.")
-
+            st.warning("⚠️ Svi učitani fajlovi su prazni.")
     
    # 4️⃣ Ako nema ništa, vrati prazan DF
     st.warning("⚠️ Nema dostupnih TXT ni Parquet fajlova – vraćam prazan DataFrame.")
