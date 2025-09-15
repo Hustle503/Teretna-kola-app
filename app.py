@@ -2,17 +2,15 @@ import os
 import time
 import duckdb
 import glob
-import io
 import pandas as pd
 import streamlit as st
-import requests
+import io
 
-# --- Fiksna glavna baza (Google Drive) ---
-DB_FILE = "kola_sk.db" 
+# ---------- Konstante ----------
+DB_FILE = r"C:\Teretna kola\kola.duckdb"        # glavna baza
+UPDATE_DB = r"C:\Teretna kola\kola_update.duckdb" # update baza
 STATE_FILE = "loaded_files.json"
 
-# ---------- Putanja do baze ----------
-DB_PATH = r"C:\Teretna kola\kola.duckdb"
 # ---------- Helperi ----------
 @st.cache_data(show_spinner=False)
 def get_tables(db_path: str):
@@ -24,222 +22,160 @@ def get_tables(db_path: str):
     finally:
         con.close()
 
+@st.cache_data(show_spinner=False)
 def run_sql(sql: str) -> pd.DataFrame:
-    """Izvrši upit nad UNION bazom (glavna + update)."""
+    """Izvrši SQL nad glavnom + update bazom."""
     con = duckdb.connect()
-    con.execute(f"ATTACH '{MAIN_DB}' AS main")
-    if os.path.exists(UPDATE_DB):
-        con.execute(f"ATTACH '{UPDATE_DB}' AS upd")
-
-    # kreiramo view da uvek imamo objedinjene podatke
-    q_union = """
-        CREATE OR REPLACE VIEW kola_union AS
-        SELECT * FROM main.kola
-        UNION ALL
-        SELECT * FROM upd.kola_update
-    """
-    if "kola" in get_tables(MAIN_DB):
-        if os.path.exists(UPDATE_DB) and "kola_update" in get_tables(UPDATE_DB):
-            con.execute(q_union)
-        else:
-            con.execute("CREATE OR REPLACE VIEW kola_union AS SELECT * FROM main.kola")
-
     try:
+        if os.path.exists(DB_FILE):
+            con.execute(f"ATTACH '{DB_FILE}' AS main")
+        if os.path.exists(UPDATE_DB):
+            con.execute(f"ATTACH '{UPDATE_DB}' AS upd")
+
+        # Kreiranje view za objedinjene podatke
+        tables_main = [r[0] for r in con.execute(
+            "SELECT table_name FROM duckdb_tables() WHERE database_name='main'"
+        ).fetchall()]
+        tables_upd = [r[0] for r in con.execute(
+            "SELECT table_name FROM duckdb_tables() WHERE database_name='upd'"
+        ).fetchall()]
+
+        if "kola" in tables_main:
+            if "kola_update" in tables_upd:
+                con.execute("""
+                    CREATE OR REPLACE VIEW kola_union AS
+                    SELECT * FROM main.kola
+                    UNION ALL
+                    SELECT * FROM upd.kola_update
+                """)
+            else:
+                con.execute("CREATE OR REPLACE VIEW kola_union AS SELECT * FROM main.kola")
+
         return con.execute(sql).fetchdf()
     finally:
         con.close()
+
+# ---------- Funkcije za inicijalizaciju / update ----------
+def init_database(folder_path, table_name="kola"):
+    """Inicijalno punjenje baze iz TXT fajlova."""
+    txt_files = sorted(glob.glob(os.path.join(folder_path, "*.txt")))
+    if not txt_files:
+        st.warning("⚠️ Nema TXT fajlova u folderu.")
+        return
+
+    con = duckdb.connect(DB_FILE)
+    try:
+        for f in txt_files:
+            df = pd.read_csv(f, sep="\t")  # pretpostavka: tab-delimited
+            con.register("tmp", df)
+            con.execute(f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM tmp")
+            con.unregister("tmp")
+    finally:
+        con.close()
+
+def update_database(folder_path, table_name="kola"):
+    """Dodavanje novih fajlova u update bazu."""
+    txt_files = sorted(glob.glob(os.path.join(folder_path, "*.txt")))
+    if not txt_files:
+        st.warning("⚠️ Nema TXT fajlova u folderu.")
+        return
+
+    con = duckdb.connect(UPDATE_DB)
+    try:
+        for f in txt_files:
+            df = pd.read_csv(f, sep="\t")
+            con.register("tmp", df)
+            con.execute(f"""
+                CREATE TABLE IF NOT EXISTS {table_name}_update AS SELECT * FROM tmp
+            """)
+            con.unregister("tmp")
+    finally:
+        con.close()
+
+def reload_file(file_path, table_name="kola"):
+    """Ponovo učitavanje jednog fajla."""
+    df = pd.read_csv(file_path, sep="\t")
+    con = duckdb.connect(DB_FILE)
+    try:
+        con.register("tmp", df)
+        con.execute(f"""
+            DELETE FROM {table_name} WHERE source_file = '{os.path.basename(file_path)}';
+            INSERT INTO {table_name} SELECT * FROM tmp
+        """)
+        con.unregister("tmp")
+    finally:
+        con.close()
+
+def safe_execute(func, msg):
+    try:
+        func()
+        st.success(msg)
+    except Exception as e:
+        st.error(f"Greška: {e}")
+
 # ---------- Sidebar ----------
 st.sidebar.title("⚙️ Podešavanja")
-db_path = st.sidebar.text_input(
-    "Putanja do DuckDB baze (.db)",
-    value = os.path.abspath(DB_FILE)
-)
-
-folder_path = st.sidebar.text_input(
-    "Folder sa TXT fajlovima (npr. C:\\Teretna kola)",
-    value=r"C:\Teretna kola"
-)
-
+folder_path = st.sidebar.text_input("Folder sa TXT fajlovima", value=r"C:\Teretna kola")
 table_name = st.sidebar.text_input("Ime tabele", value="kola")
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Napomena: `init_database` pokreće **prvo punjenje**. Posle toga koristi `update`.")
+st.sidebar.caption("Napomena: `init_database` pokreće prvo punjenje. Posle toga koristi `update`.")
 
-init_clicked = st.sidebar.button("🚀 Init database (prvo punjenje)")
+init_clicked = st.sidebar.button("🚀 Init database")
 update_clicked = st.sidebar.button("➕ Update (dodaj nove fajlove)")
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("🔄 Ponovno učitavanje fajlova")
-
-# Učitaj sve txt fajlove iz foldera
-txt_files = sorted(glob.glob(os.path.join(folder_path, "*.txt")))
-
-if txt_files:
-    reload_files = st.sidebar.multiselect(
-        "Izaberi fajlove za reload",
-        options=txt_files,
-        format_func=lambda x: os.path.basename(x)
-    )
-    if st.sidebar.button("🔁 Reload označenih fajlova"):
-        for f in reload_files:
-            try:
-                reload_file(f, table_name=table_name)
-                st.success(f"🔄 Fajl {os.path.basename(f)} uspešno ponovo učitan!")
-            except Exception as e:
-                st.error(f"⚠️ Greška pri reload-u {os.path.basename(f)}: {e}")
-else:
-    st.sidebar.warning("⚠️ Nema txt fajlova u izabranom folderu.")
-
-st.sidebar.markdown("---")
-st.sidebar.caption("Baza i fajlovi ostaju na disku; aplikacija samo izvršava SQL i poziva operacije iz database.py.")
-# ---------- Sidebar: Upload Excela ----------
+# ---------- Excel upload ----------
 st.sidebar.subheader("📂 Uvoz Excela (Stanje SK)")
+uploaded_excel = st.sidebar.file_uploader("Izaberi Excel fajl (.xlsx)", type=["xlsx"])
 
-uploaded_excel = st.sidebar.file_uploader(
-    "Izaberi Excel fajl (.xlsx)",
-    type=["xlsx"]
-)
-
-if uploaded_excel is not None:
-    if st.sidebar.button("📥 Učitaj u bazu"):
-        try:
-            # 1. Učitaj Excel u pandas
-            df_stanje = pd.read_excel(uploaded_excel)
-
-            # 2. Poveži se na DuckDB
-            con = duckdb.connect(DB_FILE)
-
-            # 3. Snimi kao tabelu 'stanje'
-            con.register("df_stanje", df_stanje)
-            con.execute("CREATE OR REPLACE TABLE stanje AS SELECT * FROM df_stanje")
-            con.unregister("df_stanje")
-
-            # 4. Provera kolona
-            cols = con.execute("PRAGMA table_info(stanje)").fetchdf()
-            con.close()
-
-            st.success(f"✅ Excel učitan u tabelu 'stanje' ({len(df_stanje)} redova).")
-            st.dataframe(cols, use_container_width=True)
-
-        except Exception as e:
-            st.error(f"❌ Greška pri uvozu Excela: {e}")
+if uploaded_excel and st.sidebar.button("📥 Učitaj u bazu"):
+    try:
+        df_stanje = pd.read_excel(uploaded_excel)
+        con = duckdb.connect(DB_FILE)
+        con.register("df_stanje", df_stanje)
+        con.execute("CREATE OR REPLACE TABLE stanje AS SELECT * FROM df_stanje")
+        con.unregister("df_stanje")
+        con.close()
+        st.success(f"✅ Excel učitan u tabelu 'stanje' ({len(df_stanje)} redova).")
+    except Exception as e:
+        st.error(f"❌ Greška pri uvozu Excela: {e}")
 
 # ---------- Akcije ----------
 if init_clicked:
-    def _init():
-        init_database(folder_path, table_name=table_name)
-        default_abs = os.path.abspath(DEFAULT_DB)
-        if os.path.abspath(db_path) != default_abs and os.path.exists(default_abs):
-            try:
-                if os.path.exists(db_path):
-                    os.remove(db_path)
-                os.replace(default_abs, db_path)
-            except Exception as e:
-                raise RuntimeError(f"Nisam uspeo da premestim {default_abs} → {db_path}: {e}")
-    safe_execute(_init, "✅ Inicijalno punjenje završeno.")
-
+    safe_execute(lambda: init_database(folder_path, table_name), "✅ Inicijalno punjenje završeno.")
 if update_clicked:
-    def _update():
-        update_database(folder_path, table_name=table_name)
-    safe_execute(_update, "✅ Update završen.")
+    safe_execute(lambda: update_database(folder_path, table_name), "✅ Update završen.")
 
+# ---------- Glavni deo ----------
 st.title("🚃 Teretna kola SK — kontrolna tabla")
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
-    "📊 Pregled", "📈 Izveštaji", "🔎 SQL upiti", "🔬 Pregled podataka", "📌 Poslednji unosi", "🔍 Pretraga kola", "📊 Kola po stanicima", "🚂 Kretanje 4098 kola–TIP 0", "🚂 Kretanje 4098 kola–TIP 1", "📊 Kola po serijama"])
+tab1, tab2 = st.tabs(["📊 Pregled", "📈 Izveštaji"])
 
 # ---------- Tab 1: Pregled ----------
 with tab1:
-    col_a, col_b, col_c, col_d = st.columns(4)
+    col_a, col_b = st.columns(2)
     try:
-        df_cnt = run_sql(db_path, f'SELECT COUNT(*) AS broj_redova FROM "{table_name}"')
+        df_cnt = run_sql(f'SELECT COUNT(*) AS broj_redova FROM "{table_name}"')
         col_a.metric("Ukupan broj redova", f"{int(df_cnt['broj_redova'][0]):,}".replace(",", "."))
 
-        df_files = run_sql(db_path, f'SELECT COUNT(DISTINCT source_file) AS fajlova FROM "{table_name}"')
+        df_files = run_sql(f'SELECT COUNT(DISTINCT source_file) AS fajlova FROM "{table_name}"')
         col_b.metric("Učitanih fajlova", int(df_files["fajlova"][0]))
-
-        df_range = run_sql(
-            db_path,
-            f'''
-            SELECT
-              MIN(DatumVreme) AS min_dt,
-              MAX(DatumVreme) AS max_dt
-            FROM "{table_name}"
-            WHERE DatumVreme IS NOT NULL
-            '''
-        )
-        min_dt = str(df_range["min_dt"][0]) if df_range["min_dt"][0] is not None else "—"
-        max_dt = str(df_range["max_dt"][0]) if df_range["max_dt"][0] is not None else "—"
-        col_c.metric("Najraniji datum", min_dt)
-        col_d.metric("Najkasniji datum", max_dt)
-
-        st.divider()
-        st.subheader("Učitanih redova po fajlu (top 20)")
-        df_by_file = run_sql(
-            db_path,
-            f'''
-            SELECT source_file, COUNT(*) AS broj
-            FROM "{table_name}"
-            GROUP BY source_file
-            ORDER BY broj DESC
-            LIMIT 20
-            '''
-        )
-        st.dataframe(df_by_file, use_container_width=True)
-
     except Exception as e:
         st.error(f"Ne mogu da pročitam bazu: {e}")
-        st.stop()
 
 # ---------- Tab 2: Izveštaji ----------
 with tab2:
-    st.subheader("Suma NetoTone po mesecu")
-    q_month = f"""
-        SELECT
-          date_trunc('month', DatumVreme) AS mesec,
-          SUM(COALESCE("NetoTone", 0)) AS ukupno_tona
-        FROM "{table_name}"
-        WHERE DatumVreme IS NOT NULL
-        GROUP BY 1
-        ORDER BY 1
-    """
-    df_month = run_sql(db_path, q_month)
-    st.line_chart(df_month.set_index("mesec")["ukupno_tona"])
-
-    st.subheader("Top 20 stanica po broju vagona")
-    q_sta = f"""
-        SELECT "Stanica", COUNT(*) AS broj
-        FROM "{table_name}"
-        GROUP BY "Stanica"
-        ORDER BY broj DESC
-        LIMIT 20
-    """
-    df_sta = run_sql(db_path, q_sta)
-    st.bar_chart(df_sta.set_index("Stanica")["broj"])
-
-    c1, c2 = st.columns(2)
-    with c1:
-        st.subheader("Prosečna NetoTone po tipu kola")
-        q_tip = f"""
-            SELECT "Tip kola" AS tip, AVG(COALESCE("NetoTone", 0)) AS prosek_tona
+    try:
+        q_month = f"""
+            SELECT date_trunc('month', DatumVreme) AS mesec,
+                   SUM(COALESCE(NetoTone,0)) AS ukupno_tona
             FROM "{table_name}"
-            GROUP BY tip
-            ORDER BY prosek_tona DESC
-            LIMIT 20
+            GROUP BY 1 ORDER BY 1
         """
-        df_tip = run_sql(db_path, q_tip)
-        st.dataframe(df_tip, use_container_width=True)
-    with c2:
-        st.subheader("Prosečna tara po tipu kola")
-        q_tara = f"""
-            SELECT "Tip kola" AS tip, AVG(COALESCE("tara", 0)) AS prosek_tare
-            FROM "{table_name}"
-            GROUP BY tip
-            ORDER BY prosek_tare DESC
-            LIMIT 20
-        """
-        df_tara = run_sql(db_path, q_tara)
-        st.dataframe(df_tara, use_container_width=True)
+        df_month = run_sql(q_month)
+        st.line_chart(df_month.set_index("mesec")["ukupno_tona"])
+    except Exception as e:
+        st.error(f"Greška u izveštaju: {e}")
 
 # ---------- Tab 3: SQL upiti ----------
 with tab3:
