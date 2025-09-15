@@ -360,62 +360,68 @@ with tab7:
 with tab8:
     st.subheader("🚂 Kretanje 4098 kola – samo TIP 0")
     try:
-        df_tip0 = run_sql(f'''
-            WITH poslednji AS (
-                SELECT 
-                    s.SerijaIpodserija,
-                    s.TIP,
-                    s.TelegBaza,
-                    s.PR,
-                    s.NR,
-                    k.Serija,
-                    k.Stanica,
-                    st.Naziv AS NazivStanice,
-                    k.DatumVreme,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY s.SerijaIpodserija
-                        ORDER BY k.DatumVreme DESC
-                    ) AS rn
-                FROM "{excel_table}" s
-                LEFT JOIN "{table_name}" k
-                  ON TRIM(k.broj_kola_bez_rezima_i_kb) = TRIM(s.SerijaIpodserija)
-                LEFT JOIN stanice st
-                  ON k.Stanica = st.Sifra
-                WHERE s.TIP = 0
-            )
-            SELECT *
-            FROM poslednji
-            WHERE rn = 1 OR rn IS NULL
-            ORDER BY DatumVreme ASC
-        ''')
+        # Proveri da li postoje potrebne tabele
+        tables = run_sql("SELECT table_name FROM duckdb_tables()")
+        needed_tables = [table_name, excel_table, "stanice"]
+        missing = [t for t in needed_tables if t not in tables["table_name"].tolist()]
+        if missing:
+            st.warning(f"⚠️ Nedostaju tabele: {', '.join(missing)}. Ne mogu da prikažem tab.")
+        else:
+            df_tip0 = run_sql(f'''
+                WITH poslednji AS (
+                    SELECT 
+                        s.SerijaIpodserija,
+                        s.TIP,
+                        s.TelegBaza,
+                        s.PR,
+                        s.NR,
+                        k.Serija,
+                        k.Stanica,
+                        st.Naziv AS NazivStanice,
+                        k.DatumVreme,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY s.SerijaIpodserija
+                            ORDER BY k.DatumVreme DESC
+                        ) AS rn
+                    FROM "{excel_table}" s
+                    LEFT JOIN "{table_name}" k
+                      ON TRIM(k.broj_kola_bez_rezima_i_kb) = TRIM(s.SerijaIpodserija)
+                    LEFT JOIN stanice st
+                      ON k.Stanica = st.Sifra
+                    WHERE s.TIP = 0
+                )
+                SELECT *
+                FROM poslednji
+                WHERE rn = 1 OR rn IS NULL
+                ORDER BY DatumVreme ASC
+            ''')
 
-        if "DatumVreme" in df_tip0.columns:
-            df_tip0["BrojDana"] = (pd.Timestamp.now() - pd.to_datetime(df_tip0["DatumVreme"], errors='coerce')).dt.days
+            if "DatumVreme" in df_tip0.columns:
+                df_tip0["BrojDana"] = (pd.Timestamp.now() - pd.to_datetime(df_tip0["DatumVreme"], errors='coerce')).dt.days
 
-        # --- Filter po seriji ---
-        series_options = ["Sve serije"] + sorted(df_tip0["Serija"].dropna().unique().tolist())
-        selected_series = st.selectbox("🚆 Filtriraj po seriji kola (TIP 0)", series_options, key="tip0_series")
-        if selected_series != "Sve serije":
-            df_tip0 = df_tip0[df_tip0["Serija"] == selected_series]
+            # Filter po seriji i stanici
+            series_options = ["Sve serije"] + sorted(df_tip0["Serija"].dropna().unique().tolist())
+            selected_series = st.selectbox("🚆 Filtriraj po seriji kola (TIP 0)", series_options, key="tip0_series")
+            if selected_series != "Sve serije":
+                df_tip0 = df_tip0[df_tip0["Serija"] == selected_series]
 
-        # --- Filter po stanici ---
-        station_options = ["Sve stanice"] + sorted(df_tip0["NazivStanice"].dropna().unique().tolist())
-        selected_station = st.selectbox("📍 Filtriraj po stanici (TIP 0)", station_options, key="tip0_station")
-        if selected_station != "Sve stanice":
-            df_tip0 = df_tip0[df_tip0["NazivStanice"] == selected_station]
+            station_options = ["Sve stanice"] + sorted(df_tip0["NazivStanice"].dropna().unique().tolist())
+            selected_station = st.selectbox("📍 Filtriraj po stanici (TIP 0)", station_options, key="tip0_station")
+            if selected_station != "Sve stanice":
+                df_tip0 = df_tip0[df_tip0["NazivStanice"] == selected_station]
 
-        st.dataframe(df_tip0, use_container_width=True)
+            st.dataframe(df_tip0, use_container_width=True)
 
-        # Download CSV / Excel
-        c1, c2 = st.columns(2)
-        with c1:
-            csv = df_tip0.to_csv(index=False).encode("utf-8")
-            st.download_button("⬇️ Preuzmi tabelu (CSV)", csv, "tip0_kretanje.csv", "text/csv")
-        with c2:
-            excel_bytes = io.BytesIO()
-            with pd.ExcelWriter(excel_bytes, engine="openpyxl") as writer:
-                df_tip0.to_excel(writer, sheet_name="TIP0", index=False)
-            st.download_button("⬇️ Preuzmi tabelu (Excel)", excel_bytes.getvalue(), "tip0_kretanje.xlsx")
+            # Download CSV / Excel
+            c1, c2 = st.columns(2)
+            with c1:
+                csv = df_tip0.to_csv(index=False).encode("utf-8")
+                st.download_button("⬇️ Preuzmi tabelu (CSV)", csv, "tip0_kretanje.csv", "text/csv")
+            with c2:
+                excel_bytes = io.BytesIO()
+                with pd.ExcelWriter(excel_bytes, engine="openpyxl") as writer:
+                    df_tip0.to_excel(writer, sheet_name="TIP0", index=False)
+                st.download_button("⬇️ Preuzmi tabelu (Excel)", excel_bytes.getvalue(), "tip0_kretanje.xlsx")
 
     except Exception as e:
         st.error(f"Greška: {e}")
@@ -424,62 +430,67 @@ with tab8:
 with tab9:
     st.subheader("🚂 Kretanje 4098 kola – samo TIP 1")
     try:
-        df_tip1 = run_sql(f'''
-            WITH poslednji AS (
-                SELECT 
-                    s.SerijaIpodserija,
-                    s.TIP,
-                    s.TelegBaza,
-                    s.PR,
-                    s.NR,
-                    k.Serija,
-                    k.Stanica,
-                    st.Naziv AS NazivStanice,
-                    k.DatumVreme,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY s.SerijaIpodserija
-                        ORDER BY k.DatumVreme DESC
-                    ) AS rn
-                FROM "{excel_table}" s
-                LEFT JOIN "{table_name}" k
-                  ON TRIM(k.broj_kola_bez_rezima_i_kb) = TRIM(s.SerijaIpodserija)
-                LEFT JOIN stanice st
-                  ON k.Stanica = st.Sifra
-                WHERE s.TIP = 1
-            )
-            SELECT *
-            FROM poslednji
-            WHERE rn = 1 OR rn IS NULL
-            ORDER BY DatumVreme DESC
-        ''')
+        # Provera postojanja tabela
+        tables = run_sql("SELECT table_name FROM duckdb_tables()")
+        missing = [t for t in [table_name, excel_table, "stanice"] if t not in tables["table_name"].tolist()]
+        if missing:
+            st.warning(f"⚠️ Nedostaju tabele: {', '.join(missing)}. Ne mogu da prikažem tab.")
+        else:
+            df_tip1 = run_sql(f'''
+                WITH poslednji AS (
+                    SELECT 
+                        s.SerijaIpodserija,
+                        s.TIP,
+                        s.TelegBaza,
+                        s.PR,
+                        s.NR,
+                        k.Serija,
+                        k.Stanica,
+                        st.Naziv AS NazivStanice,
+                        k.DatumVreme,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY s.SerijaIpodserija
+                            ORDER BY k.DatumVreme DESC
+                        ) AS rn
+                    FROM "{excel_table}" s
+                    LEFT JOIN "{table_name}" k
+                      ON TRIM(k.broj_kola_bez_rezima_i_kb) = TRIM(s.SerijaIpodserija)
+                    LEFT JOIN stanice st
+                      ON k.Stanica = st.Sifra
+                    WHERE s.TIP = 1
+                )
+                SELECT *
+                FROM poslednji
+                WHERE rn = 1 OR rn IS NULL
+                ORDER BY DatumVreme DESC
+            ''')
 
-        if "DatumVreme" in df_tip1.columns:
-            df_tip1["BrojDana"] = (pd.Timestamp.now() - pd.to_datetime(df_tip1["DatumVreme"], errors='coerce')).dt.days
+            if "DatumVreme" in df_tip1.columns:
+                df_tip1["BrojDana"] = (pd.Timestamp.now() - pd.to_datetime(df_tip1["DatumVreme"], errors='coerce')).dt.days
 
-        # --- Filter po seriji ---
-        series_options = ["Sve serije"] + sorted(df_tip1["Serija"].dropna().unique().tolist())
-        selected_series = st.selectbox("🚆 Filtriraj po seriji kola (TIP 1)", series_options, key="tip1_series")
-        if selected_series != "Sve serije":
-            df_tip1 = df_tip1[df_tip1["Serija"] == selected_series]
+            # Filter po seriji i stanici
+            series_options = ["Sve serije"] + sorted(df_tip1["Serija"].dropna().unique().tolist())
+            selected_series = st.selectbox("🚆 Filtriraj po seriji kola (TIP 1)", series_options, key="tip1_series")
+            if selected_series != "Sve serije":
+                df_tip1 = df_tip1[df_tip1["Serija"] == selected_series]
 
-        # --- Filter po stanici ---
-        station_options = ["Sve stanice"] + sorted(df_tip1["NazivStanice"].dropna().unique().tolist())
-        selected_station = st.selectbox("📍 Filtriraj po stanici (TIP 1)", station_options, key="tip1_station")
-        if selected_station != "Sve stanice":
-            df_tip1 = df_tip1[df_tip1["NazivStanice"] == selected_station]
+            station_options = ["Sve stanice"] + sorted(df_tip1["NazivStanice"].dropna().unique().tolist())
+            selected_station = st.selectbox("📍 Filtriraj po stanici (TIP 1)", station_options, key="tip1_station")
+            if selected_station != "Sve stanice":
+                df_tip1 = df_tip1[df_tip1["NazivStanice"] == selected_station]
 
-        st.dataframe(df_tip1, use_container_width=True)
+            st.dataframe(df_tip1, use_container_width=True)
 
-        # Download CSV / Excel
-        c1, c2 = st.columns(2)
-        with c1:
-            csv = df_tip1.to_csv(index=False).encode("utf-8")
-            st.download_button("⬇️ Preuzmi tabelu (CSV)", csv, "tip1_kretanje.csv", "text/csv")
-        with c2:
-            excel_bytes = io.BytesIO()
-            with pd.ExcelWriter(excel_bytes, engine="openpyxl") as writer:
-                df_tip1.to_excel(writer, sheet_name="TIP1", index=False)
-            st.download_button("⬇️ Preuzmi tabelu (Excel)", excel_bytes.getvalue(), "tip1_kretanje.xlsx")
+            # Download CSV / Excel
+            c1, c2 = st.columns(2)
+            with c1:
+                csv = df_tip1.to_csv(index=False).encode("utf-8")
+                st.download_button("⬇️ Preuzmi tabelu (CSV)", csv, "tip1_kretanje.csv", "text/csv")
+            with c2:
+                excel_bytes = io.BytesIO()
+                with pd.ExcelWriter(excel_bytes, engine="openpyxl") as writer:
+                    df_tip1.to_excel(writer, sheet_name="TIP1", index=False)
+                st.download_button("⬇️ Preuzmi tabelu (Excel)", excel_bytes.getvalue(), "tip1_kretanje.xlsx")
 
     except Exception as e:
         st.error(f"Greška: {e}")
@@ -488,56 +499,62 @@ with tab9:
 with tab10:
     st.subheader("📊 Pivot po seriji i stanicama")
     try:
-        df_last = run_sql(f'''
-            WITH poslednji AS (
-                SELECT k.Serija, k.Stanica, s.TIP, ROW_NUMBER() OVER (
-                    PARTITION BY k.broj_kola_bez_rezima_i_kb
-                    ORDER BY k.DatumVreme DESC
-                ) AS rn
-                FROM "{table_name}" k
-                JOIN "{excel_table}" s
-                  ON k.broj_kola_bez_rezima_i_kb = s.SerijaIpodserija
-            )
-            SELECT *
-            FROM poslednji WHERE rn=1
-        ''')
+        tables = run_sql("SELECT table_name FROM duckdb_tables()")
+        missing = [t for t in [table_name, excel_table] if t not in tables["table_name"].tolist()]
+        if missing:
+            st.warning(f"⚠️ Nedostaju tabele: {', '.join(missing)}. Ne mogu da prikažem tab.")
+        else:
+            df_last = run_sql(f'''
+                WITH poslednji AS (
+                    SELECT k.Serija, k.Stanica, s.TIP, ROW_NUMBER() OVER (
+                        PARTITION BY k.broj_kola_bez_rezima_i_kb
+                        ORDER BY k.DatumVreme DESC
+                    ) AS rn
+                    FROM "{table_name}" k
+                    JOIN "{excel_table}" s
+                      ON k.broj_kola_bez_rezima_i_kb = s.SerijaIpodserija
+                )
+                SELECT *
+                FROM poslednji WHERE rn=1
+            ''')
 
-        # Pivot tabela po seriji
-        df_pivot = df_last.pivot_table(index='Serija', columns='TIP', aggfunc='size', fill_value=0).reset_index()
-        df_pivot = df_pivot.rename(columns={0: "tip0", 1: "tip1"})
-        df_pivot["Ukupno"] = df_pivot.get("tip0",0) + df_pivot.get("tip1",0)
+            # Pivot tabela po seriji
+            df_pivot = df_last.pivot_table(index='Serija', columns='TIP', aggfunc='size', fill_value=0).reset_index()
+            df_pivot = df_pivot.rename(columns={0: "tip0", 1: "tip1"})
+            df_pivot["Ukupno"] = df_pivot.get("tip0",0) + df_pivot.get("tip1",0)
 
-        # Red Σ
-        total_row = pd.DataFrame([{
-            "Serija": "Σ",
-            "tip0": df_pivot["tip0"].sum(),
-            "tip1": df_pivot["tip1"].sum(),
-            "Ukupno": df_pivot["Ukupno"].sum()
-        }])
-        df_pivot = pd.concat([df_pivot, total_row], ignore_index=True)
+            # Red Σ
+            total_row = pd.DataFrame([{
+                "Serija": "Σ",
+                "tip0": df_pivot["tip0"].sum(),
+                "tip1": df_pivot["tip1"].sum(),
+                "Ukupno": df_pivot["Ukupno"].sum()
+            }])
+            df_pivot = pd.concat([df_pivot, total_row], ignore_index=True)
 
-        left, right = st.columns([1,1])
-        with left:
-            st.markdown("### 📋 Ukupan broj kola po serijama")
-            st.dataframe(df_pivot, use_container_width=True)
+            left, right = st.columns([1,1])
+            with left:
+                st.markdown("### 📋 Ukupan broj kola po serijama")
+                st.dataframe(df_pivot, use_container_width=True)
 
-        with right:
-            series_list = df_pivot[df_pivot["Serija"]!="Σ"]["Serija"].tolist()
-            selected_series = st.selectbox("Izaberi seriju za detalje", ["Nijedna"] + series_list, key="pivot_series")
-            if selected_series != "Nijedna":
-                df_detail = df_last[df_last["Serija"]==selected_series].pivot_table(
-                    index='Stanica', columns='TIP', aggfunc='size', fill_value=0
-                ).reset_index().rename(columns={0:"tip0",1:"tip1"})
-                df_detail["Ukupno"] = df_detail.get("tip0",0) + df_detail.get("tip1",0)
-                total = pd.DataFrame([{
-                    "Stanica": "Σ",
-                    "tip0": df_detail["tip0"].sum(),
-                    "tip1": df_detail["tip1"].sum(),
-                    "Ukupno": df_detail["Ukupno"].sum()
-                }])
-                df_detail = pd.concat([df_detail,total], ignore_index=True)
-                st.dataframe(df_detail, use_container_width=True)
+            with right:
+                series_list = df_pivot[df_pivot["Serija"]!="Σ"]["Serija"].tolist()
+                selected_series = st.selectbox("Izaberi seriju za detalje", ["Nijedna"] + series_list, key="pivot_series")
+                if selected_series != "Nijedna":
+                    df_detail = df_last[df_last["Serija"]==selected_series].pivot_table(
+                        index='Stanica', columns='TIP', aggfunc='size', fill_value=0
+                    ).reset_index().rename(columns={0:"tip0",1:"tip1"})
+                    df_detail["Ukupno"] = df_detail.get("tip0",0) + df_detail.get("tip1",0)
+                    total = pd.DataFrame([{
+                        "Stanica": "Σ",
+                        "tip0": df_detail["tip0"].sum(),
+                        "tip1": df_detail["tip1"].sum(),
+                        "Ukupno": df_detail["Ukupno"].sum()
+                    }])
+                    df_detail = pd.concat([df_detail,total], ignore_index=True)
+                    st.dataframe(df_detail, use_container_width=True)
 
     except Exception as e:
         st.error(f"Greška: {e}")
+
 
