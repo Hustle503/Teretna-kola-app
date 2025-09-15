@@ -184,81 +184,69 @@ def load_data():
     # 🔗 Google Drive folder (samo za info)
     folder_url_txt = f"https://drive.google.com/drive/folders/{NOVI_UNOS_FOLDER_ID}"
 
-    # 1️⃣ TXT fajlovi
-    txt_files = glob.glob(os.path.join(NOVI_UNOS_FOLDER, "*.txt"))
-    if txt_files:
-        st.success(f"📂 Pronađeno {len(txt_files)} TXT fajlova za obradu.")
-        df_list = []
-        for f in txt_files:
-            try:
-                df_list.append(parse_txt(f))
-            except Exception as e:
-                st.error(f"❌ Greška pri parsiranju {f}: {e}")
-        if df_list:
-            df_all = pl.concat(df_list, rechunk=True)
-            df_all.write_parquet("merged_from_txt.parquet")
-            st.info("💾 Podaci iz TXT fajlova sačuvani u merged_from_txt.parquet")
-            return df_all
-
-    # 2️⃣ Cache TXT
-    if os.path.exists("merged_from_txt.parquet"):
-        st.info("📂 Učitavam podatke iz merged_from_txt.parquet (cache)")
-        return pl.read_parquet("merged_from_txt.parquet")
-
-    # 3️⃣ Svi Parquet fajlovi
     parquet_files = glob.glob("*.parquet")
-    if parquet_files:
-        st.success(f"📂 Pronađeno {len(parquet_files)} Parquet fajlova u repo-u.")
+    if not parquet_files:
+        st.warning("⚠️ Nema Parquet fajlova.")
+        return pl.DataFrame()
 
-        df_list = []
-        total_rows = 0
-        for f in parquet_files:
-            try:
-                df = pl.read_parquet(f)
-                total_rows += df.height
-                st.write(f"✅ {f} učitan ({df.height} redova)")
+    merged_file = "merged_all.parquet"
+    # Brišemo stari merged ako postoji
+    if os.path.exists(merged_file):
+        os.remove(merged_file)
 
-                # Ako je samo jedna kolona raw_line, parsiraj je
-                if df.shape[1] == 1:
-                    col = df.columns[0]
-                    rows = []
-                    for line in df[col].to_list():
-                        rows.append({
-                            "Režim": line[0:2].strip(),
-                            "Vlasnik": line[2:4].strip(),
-                            "Serija": line[4:7].strip(),
-                            "Inv br": line[7:11].strip(),
-                            "KB": line[11:12].strip(),
-                            "Tip kola": line[12:15].strip(),
-                            "Voz br": line[15:20].strip(),
-                            "Stanica": line[20:25].strip(),
-                            "Status": line[25:27].strip(),
-                            "Datum": line[27:35].strip(),
-                            "Vreme": line[35:39].strip(),
-                            "Roba": line[41:47].strip(),
-                            "Reon": line[61:66].strip(),
-                            "tara": line[78:81].strip(),
-                            "NetoTone": line[83:86].strip(),
-                            "Broj vagona": line[0:12].strip(),
-                            "Broj kola": line[2:11].strip(),
-                            "source_file": f,
-                        })
-                    df = pl.DataFrame(rows)
+    for i, f in enumerate(parquet_files, 1):
+        try:
+            df = pl.read_parquet(f)
+            # Ako je samo jedna kolona, parsiraj raw_line
+            if df.shape[1] == 1:
+                col = df.columns[0]
+                rows = []
+                for line in df[col].to_list():
+                    rows.append({
+                        "Režim": line[0:2].strip(),
+                        "Vlasnik": line[2:4].strip(),
+                        "Serija": line[4:7].strip(),
+                        "Inv br": line[7:11].strip(),
+                        "KB": line[11:12].strip(),
+                        "Tip kola": line[12:15].strip(),
+                        "Voz br": line[15:20].strip(),
+                        "Stanica": line[20:25].strip(),
+                        "Status": line[25:27].strip(),
+                        "Datum": line[27:35].strip(),
+                        "Vreme": line[35:39].strip(),
+                        "Roba": line[41:47].strip(),
+                        "Reon": line[61:66].strip(),
+                        "tara": line[78:81].strip(),
+                        "NetoTone": line[83:86].strip(),
+                        "Broj vagona": line[0:12].strip(),
+                        "Broj kola": line[2:11].strip(),
+                        "source_file": f,
+                    })
+                df = pl.DataFrame(rows)
 
-                df_list.append(df)
-            except Exception as e:
-                st.error(f"❌ Greška pri čitanju {f}: {e}")
+            # Cast-ovanje i popravka vremena
+            df = df.with_columns([
+                pl.when(pl.col("Vreme") == "2400").then(pl.lit("0000")).otherwise(pl.col("Vreme")).alias("Vreme"),
+                (pl.col("Datum") + " " + pl.col("Vreme")).str.strptime(pl.Datetime, "%Y%m%d %H%M", strict=False).alias("DatumVreme"),
+                pl.col("tara").cast(pl.Int32, strict=False),
+                pl.col("NetoTone").cast(pl.Int32, strict=False),
+                pl.col("Inv br").cast(pl.Int32, strict=False),
+            ])
 
-        if df_list:
-            st.info("🔄 Spajam sve Parquet fajlove u jedan (streaming način)...")
-            df_all = pl.concat(df_list, rechunk=True)
-            st.success(f"💾 Svi fajlovi spojeni ({total_rows:,} redova) i sačuvani u merged_all.parquet".replace(",", "."))
-            df_all.write_parquet("merged_all.parquet")
-            return df_all
+            # Append u merged fajl
+            if i == 1:
+                df.write_parquet(merged_file)
+            else:
+                df.write_parquet(merged_file, append=True)
 
-    # 4️⃣ Ako nema ništa
-    st.warning("⚠️ Nema dostupnih TXT ni Parquet fajlova – vraćam prazan DataFrame.")
-    return pl.DataFrame()
+            st.write(f"✅ {f} učitan ({df.height} redova)")
+
+        except Exception as e:
+            st.error(f"❌ Greška pri čitanju {f}: {e}")
+
+    st.success(f"💾 Svi Parquet fajlovi spojeni u {merged_file}")
+    return pl.read_parquet(merged_file)
+
 
 # =========================
 # Učitavanje Parquet fajlova → kola_sk
