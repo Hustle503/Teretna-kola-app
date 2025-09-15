@@ -8,7 +8,8 @@ import streamlit as st
 import requests
 
 # --- Fiksna glavna baza (Google Drive) ---
-DB_FILE = "kola_sk.db" STATE_FILE = "loaded_files.json"
+DB_FILE = "kola_sk.db" 
+STATE_FILE = "loaded_files.json"
 
 # ---------- Putanja do baze ----------
 DB_PATH = r"C:\Teretna kola\kola.duckdb"
