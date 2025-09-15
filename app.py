@@ -176,62 +176,51 @@ def load_parquet_files(folder: str) -> pl.DataFrame:
 # =========================
 # Preuzimanje TXT fajlova (opciono, ne kritično)
 # =========================
-# 📂 Folder za lokalne fajlove
-NOVI_UNOS_FOLDER = "novi_unos"
-os.makedirs(NOVI_UNOS_FOLDER, exist_ok=True)
+# 📂 Učitavanje podataka (TXT → cache → parquet → prazan)
+def load_data():
+    NOVI_UNOS_FOLDER = "novi_unos"
+    os.makedirs(NOVI_UNOS_FOLDER, exist_ok=True)
 
-# 🔗 Google Drive folder
-NOVI_UNOS_FOLDER_ID = "1XQEUt3_TjM_lWahZHoZmlANExIwDwBW1"
-folder_url_txt = f"https://drive.google.com/drive/folders/{NOVI_UNOS_FOLDER_ID}"
+    # 🔗 Google Drive folder (samo za info, ne koristi se ovde direktno)
+    NOVI_UNOS_FOLDER_ID = "1XQEUt3_TjM_lWahZHoZmlANExIwDwBW1"
+    folder_url_txt = f"https://drive.google.com/drive/folders/{NOVI_UNOS_FOLDER_ID}"
 
-# 1️⃣ Pokušaj preuzimanje sa gdown
-try:
-    import gdown
-    st.info(f"⬇️ Pokušavam da preuzmem TXT fajlove iz foldera: {folder_url_txt}")
-    gdown.download_folder(
-        url=folder_url_txt,
-        output=NOVI_UNOS_FOLDER,
-        quiet=True,
-        use_cookies=False
-    )
-    st.success("✅ Preuzimanje završeno ili fajlovi već postoje.")
-except Exception as e:
-    st.warning(f"⚠️ Nije uspelo preuzimanje TXT fajlova: {e}")
-    # Samo preskoči, koristi lokalne fajlove
-    pass
+    # 1️⃣ TXT fajlovi
+    txt_files = glob.glob(os.path.join(NOVI_UNOS_FOLDER, "*.txt"))
+    if txt_files:
+        st.success(f"📂 Pronađeno {len(txt_files)} TXT fajlova za obradu.")
+        df_list = []
+        for f in txt_files:
+            try:
+                df_list.append(parse_txt(f))
+            except Exception as e:
+                st.error(f"❌ Greška pri parsiranju {f}: {e}")
+        if df_list:
+            df_all = pl.concat(df_list)
+            # Snimi cache
+            df_all.write_parquet("merged_from_txt.parquet")
+            st.info("💾 Podaci iz TXT fajlova sačuvani u merged_from_txt.parquet")
+            return df_all
 
-# 2️⃣ Provera da li fajlovi postoje lokalno
-txt_files = glob.glob(os.path.join(NOVI_UNOS_FOLDER, "*.txt"))
+    # 2️⃣ Ako nema TXT, pokušaj cache (merged_from_txt.parquet)
+    if os.path.exists("merged_from_txt.parquet"):
+        st.info("📂 Učitavam podatke iz merged_from_txt.parquet (cache)")
+        return pl.read_parquet("merged_from_txt.parquet")
 
-if txt_files:
-    st.success(f"📂 Pronađeno {len(txt_files)} TXT fajlova za obradu.")
-
-    # KORISTI parse_txt ZA SVAKI FAJL
-    df_list = []
-    for f in txt_files:
-        try:
-            df_list.append(parse_txt(f))
-        except Exception as e:
-            st.error(f"❌ Greška pri parsiranju {f}: {e}")
-
-    if df_list:
-        df_all = pl.concat(df_list)
-    else:
-        df_all = pl.DataFrame()
-
-else:
-    st.warning("⚠️ Nema dostupnih TXT fajlova u folderu 'novi_unos'. Pokušavam sa Parquet fajlovima...")
-
-    parquet_files = glob.glob(os.path.join(NOVI_UNOS_FOLDER, "*.parquet"))
-
+    # 3️⃣ Ako nema cache, pokušaj sve ostale parquet fajlove u repo
+    parquet_files = glob.glob("*.parquet")
     if parquet_files:
-        st.success(f"📂 Pronađeno {len(parquet_files)} Parquet fajlova za obradu.")
+        st.success(f"📂 Pronađeno {len(parquet_files)} Parquet fajlova u repo-u.")
         df_list = [pl.read_parquet(f) for f in parquet_files]
-        df_all = pl.concat(df_list)
-    else:
-        st.warning("⚠️ Nema ni Parquet fajlova – nastavljam sa praznim DataFrame.")
-        df_all = pl.DataFrame()  # prazan, da ne puca
+        return pl.concat(df_list)
 
+    # 4️⃣ Ako nema ništa, vrati prazan DF
+    st.warning("⚠️ Nema dostupnih TXT ni Parquet fajlova – vraćam prazan DataFrame.")
+    return pl.DataFrame()
+
+
+# 👉 Ovde pozivaš funkciju
+df_all = load_data()
 # =========================
 # Učitavanje Parquet fajlova → kola_sk
 # =========================
