@@ -18,7 +18,15 @@ TABLE_NAME = "kola"
 STATE_FILE = "loaded_files.json"
 DEFAULT_FOLDER = r"C:\Teretna kola"
 
-
+# ---------- Helper funkcija ----------
+@st.cache_data(show_spinner=False)
+def run_sql(sql: str) -> pd.DataFrame:
+    """Izvrši SQL nad glavnom DuckDB bazom."""
+    con = duckdb.connect(DB_FILE)
+    try:
+        return con.execute(sql).fetchdf()
+    finally:
+        con.close()
 def parse_txt(path) -> pl.DataFrame:
     rows = []
     with open(path, "r", encoding="utf-8", errors="ignore") as f:
