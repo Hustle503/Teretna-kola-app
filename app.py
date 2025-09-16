@@ -12,8 +12,11 @@ import glob
 import os
 import json
 
-DB_FILE = "kola_sk.db"
+# ---------- Konstante ----------
+DB_FILE = r"C:\Teretna kola\kola_sk.db"
+TABLE_NAME = "kola"
 STATE_FILE = "loaded_files.json"
+DEFAULT_FOLDER = r"C:\Teretna kola"
 
 
 def parse_txt(path) -> pl.DataFrame:
