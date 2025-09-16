@@ -164,6 +164,7 @@ def safe_execute(func, msg):
 # ---------- Sidebar ----------
 st.sidebar.title("⚙️ Podešavanja")
 folder_path = st.sidebar.text_input("Folder sa TXT fajlovima", value=r"C:\Teretna kola")
+st.write("Fajlovi u folderu:", glob.glob(os.path.join(folder_path, "*.txt")))
 table_name = st.sidebar.text_input("Ime tabele", value="kola")
 
 st.sidebar.markdown("---")
