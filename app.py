@@ -149,8 +149,8 @@ def reload_file(file_path, table_name="kola"):
 
         con.unregister("tmp")
         con = duckdb.connect(r"C:\Teretna kola\kola.duckdb")
-            print(con.execute("SHOW TABLES").fetchall())
-            con.close()
+        print(con.execute("SHOW TABLES").fetchall())
+        con.close()
     finally:
         con.close()
 
