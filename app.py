@@ -9,7 +9,21 @@ import io
 # ---------- Konstante ----------
 DB_FILE = r"C:\Teretna kola\kola_sk.db"
 TABLE_NAME = "kola"
+@st.cache_data(show_spinner=False)
+def run_sql(sql: str) -> pd.DataFrame:
+    con = duckdb.connect(DB_FILE)
+    try:
+        return con.execute(sql).fetchdf()
+    finally:
+        con.close()
 
+# Proveri da li tabela postoji
+tables = run_sql("SHOW TABLES")['name'].tolist()
+if TABLE_NAME not in tables:
+    st.warning(f"Tabela '{TABLE_NAME}' ne postoji u bazi!")
+else:
+    df = run_sql(f'SELECT * FROM {TABLE_NAME} LIMIT 10')
+    st.write("Prvih 10 redova tabele:", df)
 # ---------- Helper funkcija ----------
 @st.cache_data(show_spinner=False)
 def run_sql(sql: str) -> pd.DataFrame:
