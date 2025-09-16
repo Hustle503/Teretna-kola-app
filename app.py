@@ -6,10 +6,12 @@ import pandas as pd
 import streamlit as st
 import io
 
+import streamlit as st
 import duckdb
+import pandas as pd
 import polars as pl
-import glob
 import os
+import glob
 import json
 
 # ---------- Konstante ----------
@@ -18,7 +20,7 @@ TABLE_NAME = "kola"
 STATE_FILE = "loaded_files.json"
 DEFAULT_FOLDER = r"C:\Teretna kola"
 
-# ---------- Helper funkcija ----------
+# ---------- Helper funkcije ----------
 @st.cache_data(show_spinner=False)
 def run_sql(sql: str) -> pd.DataFrame:
     """Izvrši SQL nad glavnom DuckDB bazom."""
@@ -27,6 +29,18 @@ def run_sql(sql: str) -> pd.DataFrame:
         return con.execute(sql).fetchdf()
     finally:
         con.close()
+
+def load_state():
+    if os.path.exists(STATE_FILE):
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            return set(json.load(f))
+    return set()
+
+def save_state(processed_files):
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(list(processed_files), f, indent=2)
+
+# ---------- Funkcija za parsiranje TXT fajla ----------
 def parse_txt(path) -> pl.DataFrame:
     rows = []
     with open(path, "r", encoding="utf-8", errors="ignore") as f:
@@ -60,7 +74,6 @@ def parse_txt(path) -> pl.DataFrame:
           .then(pl.lit("0000"))
           .otherwise(pl.col("Vreme"))
           .alias("Vreme"),
-
         pl.when(pl.col("Vreme") == "2400")
           .then(
               (pl.col("Datum").str.strptime(pl.Date, "%Y%m%d", strict=False) + pl.duration(days=1))
@@ -75,8 +88,6 @@ def parse_txt(path) -> pl.DataFrame:
         (pl.col("Datum") + " " + pl.col("Vreme"))
             .str.strptime(pl.Datetime, "%Y%m%d %H%M", strict=False)
             .alias("DatumVreme"),
-
-        # ✅ dodat flag za validnost datuma
         pl.col("Datum").str.strptime(pl.Date, "%Y%m%d", strict=False).is_not_null().alias("Datum_validan")
     ])
 
@@ -89,22 +100,12 @@ def parse_txt(path) -> pl.DataFrame:
 
     return df
 
-def load_state():
-    if os.path.exists(STATE_FILE):
-        with open(STATE_FILE, "r", encoding="utf-8") as f:
-            return set(json.load(f))
-    return set()
-
-
-def save_state(processed_files):
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(list(processed_files), f, indent=2)
-
-
-def init_database(folder: str, table_name: str = "kola"):
+# ---------- Inicijalizacija baze ----------
+def init_database(folder: str, table_name: str = TABLE_NAME):
     files = glob.glob(os.path.join(folder, "*.txt"))
     if not files:
-        raise FileNotFoundError(f"Nema txt fajlova u folderu: {folder}")
+        st.warning(f"⚠️ Nema txt fajlova u folderu: {folder}")
+        return
 
     all_dfs = [parse_txt(f) for f in files]
     df = pl.concat(all_dfs)
@@ -114,19 +115,18 @@ def init_database(folder: str, table_name: str = "kola"):
     con.register("df", df)
     con.execute(f"CREATE TABLE {table_name} AS SELECT * FROM df")
     con.unregister("df")
+    con.close()
 
     save_state(set(files))
-    print(f"✅ Inicijalno učitano {len(df)} redova iz {len(files)} fajlova")
-    return con
+    st.success(f"✅ Inicijalno učitano {len(df)} redova iz {len(files)} fajlova")
 
-
-def update_database(folder: str, table_name: str = "kola"):
+# ---------- Update baze ----------
+def update_database(folder: str, table_name: str = TABLE_NAME):
     processed = load_state()
     files = set(glob.glob(os.path.join(folder, "*.txt")))
-
     new_files = files - processed
     if not new_files:
-        print("ℹ️ Nema novih fajlova za unos.")
+        st.info("ℹ️ Nema novih fajlova za unos.")
         return
 
     con = duckdb.connect(DB_FILE)
@@ -135,71 +135,70 @@ def update_database(folder: str, table_name: str = "kola"):
         con.register("df_new", df_new)
         con.execute(f"INSERT INTO {table_name} SELECT * FROM df_new")
         con.unregister("df_new")
-        print(f"➕ Ubačeno {len(df_new)} redova iz {os.path.basename(f)}")
         processed.add(f)
-
+        st.write(f"➕ Ubačeno {len(df_new)} redova iz {os.path.basename(f)}")
+    con.close()
     save_state(processed)
-    print("✅ Update završen.")
+    st.success("✅ Update baze završen.")
 
+# ---------- Dodavanje pojedinačnog fajla ----------
+def add_txt_file_streamlit(uploaded_file, table_name: str = TABLE_NAME):
+    if uploaded_file is None:
+        st.warning("⚠️ Niste izabrali fajl.")
+        return
 
-def reload_file(path: str, table_name: str = "kola"):
-    """Ponovo učitaj fajl – obriši stare redove i unesi nove."""
-    fname = os.path.basename(path)
+    # Sačuvaj privremeno fajl da ga polars/duckdb može učitati
+    tmp_path = os.path.join(DEFAULT_FOLDER, uploaded_file.name)
+    with open(tmp_path, "wb") as f:
+        f.write(uploaded_file.getbuffer())
 
+    df = parse_txt(tmp_path)
     con = duckdb.connect(DB_FILE)
-
-    # 1. Obrisi stare redove tog fajla
-    con.execute(f"DELETE FROM {table_name} WHERE source_file = ?", [fname])
-
-    # 2. Učitaj nove podatke
-    df_new = parse_txt(path)
-    con.register("df_new", df_new)
+    con.register("df_new", df)
+    con.execute(f"CREATE TABLE IF NOT EXISTS {table_name} AS SELECT * FROM df_new")
     con.execute(f"INSERT INTO {table_name} SELECT * FROM df_new")
     con.unregister("df_new")
+    con.close()
 
-    # 3. Osveži state fajl
-    processed = load_state()
-    processed.add(path)
-    save_state(processed)
+    st.success(f"✅ Fajl '{uploaded_file.name}' dodat u bazu ({len(df)} redova)")
 
-    print(f"🔄 Fajl {fname} ponovo učitan ({len(df_new)} redova)")
+# ---------- Streamlit UI ----------
+st.title("🚃 Teretna kola — DuckDB")
 
-# --- Sidebar za update baze i Excel upload ---
+# --- Sidebar ---
 st.sidebar.title("⚙️ Podešavanja")
+folder_path = st.sidebar.text_input("Folder sa TXT fajlovima", value=DEFAULT_FOLDER)
 
-# Folder sa TXT fajlovima
-folder_path = st.sidebar.text_input("Folder sa TXT fajlovima", value=r"C:\Teretna kola", key="folder_path")
+# --- Inicijalizacija / update baze ---
+if st.sidebar.button("🚀 Inicijalizuj bazu"):
+    init_database(folder_path)
 
-# Dugme za update baze
-if st.sidebar.button("➕ Update baze iz foldera", key="update_button"):
+if st.sidebar.button("➕ Update baze iz foldera"):
     update_database(folder_path)
 
-# Excel upload
-st.sidebar.subheader("📂 Uvoz Excela (Stanje SK)")
-uploaded_excel = st.sidebar.file_uploader("Izaberi Excel fajl (.xlsx)", type=["xlsx"], key="excel_uploader")
-if uploaded_excel and st.sidebar.button("📥 Učitaj u bazu", key="excel_button"):
-    try:
-        df_stanje = pd.read_excel(uploaded_excel)
-        con = duckdb.connect(DB_FILE)
-        con.register("df_stanje", df_stanje)
-        con.execute("CREATE OR REPLACE TABLE stanje AS SELECT * FROM df_stanje")
-        con.unregister("df_stanje")
-        con.close()
-        st.success(f"✅ Excel učitan u tabelu 'stanje' ({len(df_stanje)} redova).")
-    except Exception as e:
-        st.error(f"❌ Greška pri uvozu Excela: {e}")
+# --- Dodavanje pojedinačnog fajla ---
+st.subheader("➕ Dodaj TXT fajl u bazu")
+uploaded_file = st.file_uploader("Izaberite TXT fajl", type=["txt"])
+if st.button("Dodaj fajl"):
+    add_txt_file_streamlit(uploaded_file)
 
-# --- Pregled tabele kola ---
+# --- Pregled tabele ---
 st.subheader("📊 Pregled tabele u bazi")
 try:
-    df_preview = run_sql(f'SELECT * FROM "{TABLE_NAME}" LIMIT 20')
+    df_preview = run_sql(f'SELECT * FROM {TABLE_NAME} LIMIT 20')
     st.dataframe(df_preview, use_container_width=True)
 except Exception as e:
     st.error(f"Greška pri čitanju baze: {e}")
 
-# ---------- Akcije ----------
-if st.sidebar.button("➕ Update baze iz foldera"):
-    update_database(folder_path)
+# --- Broj redova i učitanih fajlova ---
+st.subheader("ℹ️ Status baze")
+try:
+    total_rows = run_sql(f"SELECT COUNT(*) AS broj_redova FROM {TABLE_NAME}").iloc[0,0]
+    loaded_files = len(load_state())
+    st.write(f"Ukupan broj redova: {total_rows}")
+    st.write(f"Učitanih fajlova: {loaded_files}")
+except Exception as e:
+    st.warning(f"Ne mogu da pročitam bazu: {e}")
 
 
 tabs = st.tabs([
