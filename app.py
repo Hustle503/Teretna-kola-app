@@ -190,15 +190,6 @@ except Exception as e:
 if st.sidebar.button("➕ Update baze iz foldera"):
     update_database(folder_path)
 
-# ---------- Streamlit dashboard ----------
-st.title("🚃 Teretna kola SK — kontrolna tabla")
-try:
-    df_cnt = run_sql(f'SELECT COUNT(*) AS broj_redova FROM {TABLE_NAME}')
-    st.metric("Ukupan broj redova", f"{int(df_cnt['broj_redova'][0]):,}".replace(",", "."))
-except Exception as e:
-    st.error(f"Ne mogu da pročitam bazu: {e}")
-# ---------- Streamlit dashboard ----------
-st.title("🚃 Teretna kola SK — kontrolna tabla")
 
 tabs = st.tabs([
     "📊 Pregled", "📈 Izveštaji", "🔎 SQL upiti", "🔬 Pregled podataka",
