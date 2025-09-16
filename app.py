@@ -126,15 +126,27 @@ def update_database(folder_path, table_name="kola"):
         con.close()
 
 def reload_file(file_path, table_name="kola"):
-    """Ponovo učitavanje jednog fajla."""
+    """Ponovo učitavanje jednog TXT fajla u glavnu bazu."""
+    fname = os.path.basename(file_path)
+
+    # učitaj TXT fajl u DataFrame
     df = pd.read_csv(file_path, sep="\t")
+    df["source_file"] = fname
+
     con = duckdb.connect(DB_FILE)
     try:
         con.register("tmp", df)
+
+        # ako tabela postoji → obriši stare redove za ovaj fajl
+        if table_name in get_tables(DB_FILE):
+            con.execute(f"DELETE FROM {table_name} WHERE source_file = '{fname}'")
+
+        # ubaci nove redove
         con.execute(f"""
-            DELETE FROM {table_name} WHERE source_file = '{os.path.basename(file_path)}';
-            INSERT INTO {table_name} SELECT * FROM tmp
+            CREATE TABLE IF NOT EXISTS {table_name} AS SELECT * FROM tmp
         """)
+        con.execute(f"INSERT INTO {table_name} SELECT * FROM tmp")
+
         con.unregister("tmp")
     finally:
         con.close()
