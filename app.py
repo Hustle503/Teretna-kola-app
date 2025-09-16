@@ -7,9 +7,39 @@ import streamlit as st
 import io
 
 # ---------- Konstante ----------
-DB_FILE = r"C:\Teretna kola\kola_sk.db"  # Putanja do postojeće DuckDB baze
-STATE_FILE = "loaded_files.json"
+DB_FILE = r"C:\Teretna kola\kola_sk.db"
 TABLE_NAME = "kola"
+
+def add_txt_file(uploaded_file, table_name=TABLE_NAME):
+    """Dodaje izabrani TXT fajl u DuckDB bazu."""
+    if uploaded_file is None:
+        st.warning("⚠️ Niste izabrali fajl.")
+        return
+    
+    try:
+        df = pd.read_csv(uploaded_file, sep="\t")
+        df["source_file"] = uploaded_file.name
+
+        con = duckdb.connect(DB_FILE)
+        con.register("tmp", df)
+
+        # Ako tabela ne postoji, kreiraj je
+        con.execute(f"CREATE TABLE IF NOT EXISTS {table_name} AS SELECT * FROM tmp")
+        # Ubaci nove redove
+        con.execute(f"INSERT INTO {table_name} SELECT * FROM tmp")
+        con.unregister("tmp")
+        con.close()
+
+        st.success(f"✅ Fajl '{uploaded_file.name}' je dodat u bazu ({len(df)} redova).")
+    except Exception as e:
+        st.error(f"❌ Greška pri dodavanju fajla: {e}")
+
+st.title("🚃 Teretna kola SK — dodavanje fajla")
+
+uploaded_file = st.file_uploader("Izaberite TXT fajl za dodavanje", type=["txt"])
+
+if st.button("➕ Dodaj u bazu"):
+    add_txt_file(uploaded_file)
 
 # ---------- Helperi ----------
 @st.cache_data(show_spinner=False)
