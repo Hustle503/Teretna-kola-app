@@ -5,15 +5,10 @@ import glob
 import pandas as pd
 import streamlit as st
 import io
-
-import streamlit as st
-import duckdb
-import pandas as pd
 import polars as pl
-import os
-import glob
 import json
-
+st.write("📂 Trenutni folder:", os.getcwd())
+st.write("📁 Putanja do baze:", DB_FILE)
 # ---------- Konstante ----------
 DB_FILE = r"C:\Teretna kola\kola_sk.db"
 TABLE_NAME = "kola"
