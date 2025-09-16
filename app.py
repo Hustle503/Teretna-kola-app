@@ -7,8 +7,8 @@ import streamlit as st
 import io
 
 # ---------- Konstante ----------
-DB_FILE = r"C:\Teretna kola\kola.duckdb"        # glavna baza
-UPDATE_DB = r"C:\Teretna kola\kola_update.duckdb" # update baza
+DB_FILE = r"C:\Teretna kola\kola_sk.db"        # glavna baza
+UPDATE_DB = r"C:\Teretna kola\kola_sk.db" # update baza
 STATE_FILE = "loaded_files.json"
 
 # ---------- Helperi ----------
