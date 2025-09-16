@@ -79,24 +79,18 @@ if st.button("Dodaj fajl u bazu"):
 
 # --- Sidebar za update baze ---
 st.sidebar.title("⚙️ Podešavanja")
+
+# Folder sa TXT fajlovima
 folder_path = st.sidebar.text_input("Folder sa TXT fajlovima", value=r"C:\Teretna kola", key="folder_path")
 
+# Dugme za update baze iz foldera
 if st.sidebar.button("➕ Update baze iz foldera", key="update_button"):
     update_database(folder_path)
 
-# --- Pregled tabele ---
-st.subheader("📊 Pregled tabele u bazi")
-try:
-    con = duckdb.connect(DB_FILE)
-    df_preview = con.execute(f"SELECT * FROM {TABLE_NAME} LIMIT 20").fetchdf()
-    st.dataframe(df_preview, use_container_width=True)
-    con.close()
-except Exception as e:
-    st.error(f"Greška pri čitanju baze: {e}")
-# ---------- Excel upload ----------
+# Excel upload
 st.sidebar.subheader("📂 Uvoz Excela (Stanje SK)")
-uploaded_excel = st.sidebar.file_uploader("Izaberi Excel fajl (.xlsx)", type=["xlsx"])
-if uploaded_excel and st.sidebar.button("📥 Učitaj u bazu"):
+uploaded_excel = st.sidebar.file_uploader("Izaberi Excel fajl (.xlsx)", type=["xlsx"], key="excel_uploader")
+if uploaded_excel and st.sidebar.button("📥 Učitaj u bazu", key="excel_button"):
     try:
         df_stanje = pd.read_excel(uploaded_excel)
         con = duckdb.connect(DB_FILE)
