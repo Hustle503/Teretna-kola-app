@@ -35,7 +35,6 @@ def add_txt_file(uploaded_file, table_name=TABLE_NAME):
 
 # ---------- Funkcija za update baze iz foldera ----------
 def update_database(folder_path, table_name=TABLE_NAME):
-    """Dodaje nove TXT fajlove iz foldera u bazu, bez dupliranja."""
     txt_files = sorted(glob.glob(os.path.join(folder_path, "*.txt")))
     if not txt_files:
         st.warning("⚠️ Nema TXT fajlova u folderu.")
@@ -43,7 +42,6 @@ def update_database(folder_path, table_name=TABLE_NAME):
 
     con = duckdb.connect(DB_FILE)
     try:
-        # Učitaj već dodate fajlove
         loaded_files = set()
         if table_name in [r[0] for r in con.execute("SHOW TABLES").fetchall()]:
             try:
@@ -56,7 +54,7 @@ def update_database(folder_path, table_name=TABLE_NAME):
         for f in txt_files:
             fname = os.path.basename(f)
             if fname in loaded_files:
-                continue  # već ubačen
+                continue
 
             df = pd.read_csv(f, sep="\t")
             df["source_file"] = fname
@@ -79,10 +77,10 @@ uploaded_file = st.file_uploader("Izaberite TXT fajl", type=["txt"])
 if st.button("Dodaj fajl u bazu"):
     add_txt_file(uploaded_file)
 
-# --- Update baze iz foldera ---
+# --- Sidebar za update baze ---
 st.sidebar.title("⚙️ Podešavanja")
 folder_path = st.sidebar.text_input("Folder sa TXT fajlovima", value=r"C:\Teretna kola")
-if st.sidebar.button("Update baze iz foldera"):
+if st.sidebar.button("➕ Update baze iz foldera"):
     update_database(folder_path)
 
 # --- Pregled tabele ---
@@ -94,13 +92,6 @@ try:
     con.close()
 except Exception as e:
     st.error(f"Greška pri čitanju baze: {e}")
-
-# ---------- Sidebar ----------
-st.sidebar.title("⚙️ Podešavanja")
-folder_path = st.sidebar.text_input("Folder sa TXT fajlovima", value=r"C:\Teretna kola")
-
-update_clicked = st.sidebar.button("➕ Update (dodaj nove fajlove)")
-
 # ---------- Excel upload ----------
 st.sidebar.subheader("📂 Uvoz Excela (Stanje SK)")
 uploaded_excel = st.sidebar.file_uploader("Izaberi Excel fajl (.xlsx)", type=["xlsx"])
