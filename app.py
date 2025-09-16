@@ -10,7 +10,17 @@ import io
 DB_FILE = r"C:\Teretna kola\kola_sk.db"
 TABLE_NAME = "kola"
 
-# ---------- Funkcija za dodavanje pojedinačnog fajla ----------
+# ---------- Helper funkcija ----------
+@st.cache_data(show_spinner=False)
+def run_sql(sql: str) -> pd.DataFrame:
+    """Izvrši SQL nad glavnom DuckDB bazom i vrati DataFrame."""
+    con = duckdb.connect(DB_FILE)
+    try:
+        return con.execute(sql).fetchdf()
+    finally:
+        con.close()
+
+# ---------- Funkcija za dodavanje pojedinačnog TXT fajla ----------
 def add_txt_file(uploaded_file, table_name=TABLE_NAME):
     if uploaded_file is None:
         st.warning("⚠️ Niste izabrali fajl.")
@@ -35,6 +45,7 @@ def add_txt_file(uploaded_file, table_name=TABLE_NAME):
 
 # ---------- Funkcija za update baze iz foldera ----------
 def update_database(folder_path, table_name=TABLE_NAME):
+    """Dodaje nove TXT fajlove iz foldera u bazu, bez dupliranja."""
     txt_files = sorted(glob.glob(os.path.join(folder_path, "*.txt")))
     if not txt_files:
         st.warning("⚠️ Nema TXT fajlova u folderu.")
@@ -71,19 +82,19 @@ def update_database(folder_path, table_name=TABLE_NAME):
 # ---------- Streamlit UI ----------
 st.title("🚃 Teretna kola — DuckDB")
 
-# --- Dodavanje pojedinačnog fajla ---
+# --- Dodavanje pojedinačnog TXT fajla ---
 st.subheader("➕ Dodaj TXT fajl u bazu")
-uploaded_file = st.file_uploader("Izaberite TXT fajl", type=["txt"])
-if st.button("Dodaj fajl u bazu"):
+uploaded_file = st.file_uploader("Izaberite TXT fajl", type=["txt"], key="txt_uploader")
+if st.button("Dodaj fajl u bazu", key="add_file_button"):
     add_txt_file(uploaded_file)
 
-# --- Sidebar za update baze ---
+# --- Sidebar za update baze i Excel upload ---
 st.sidebar.title("⚙️ Podešavanja")
 
 # Folder sa TXT fajlovima
 folder_path = st.sidebar.text_input("Folder sa TXT fajlovima", value=r"C:\Teretna kola", key="folder_path")
 
-# Dugme za update baze iz foldera
+# Dugme za update baze
 if st.sidebar.button("➕ Update baze iz foldera", key="update_button"):
     update_database(folder_path)
 
@@ -101,6 +112,14 @@ if uploaded_excel and st.sidebar.button("📥 Učitaj u bazu", key="excel_button
         st.success(f"✅ Excel učitan u tabelu 'stanje' ({len(df_stanje)} redova).")
     except Exception as e:
         st.error(f"❌ Greška pri uvozu Excela: {e}")
+
+# --- Pregled tabele kola ---
+st.subheader("📊 Pregled tabele u bazi")
+try:
+    df_preview = run_sql(f'SELECT * FROM "{TABLE_NAME}" LIMIT 20')
+    st.dataframe(df_preview, use_container_width=True)
+except Exception as e:
+    st.error(f"Greška pri čitanju baze: {e}")
 
 # ---------- Akcije ----------
 if st.sidebar.button("➕ Update baze iz foldera"):
