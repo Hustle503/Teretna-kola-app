@@ -210,13 +210,13 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = tabs
 with tab1:
     col_a, col_b, col_c, col_d = st.columns(4)
     try:
-        df_cnt = run_sql(f'SELECT COUNT(*) AS broj_redova FROM "{table_name}"')
+        df_cnt = run_sql(f'SELECT COUNT(*) AS broj_redova FROM main.{table_name}')
         col_a.metric("Ukupan broj redova", f"{int(df_cnt['broj_redova'][0]):,}".replace(",", "."))
 
-        df_files = run_sql(f'SELECT COUNT(DISTINCT source_file) AS fajlova FROM "{table_name}"')
+        df_files = run_sql(f'SELECT COUNT(DISTINCT source_file) AS fajlova FROM main.{table_name}')
         col_b.metric("Učitanih fajlova", int(df_files["fajlova"][0]))
 
-        df_range = run_sql(f'SELECT MIN(DatumVreme) AS min_dt, MAX(DatumVreme) AS max_dt FROM "{table_name}"')
+        df_range = run_sql(f'SELECT MIN(DatumVreme) AS min_dt, MAX(DatumVreme) AS max_dt FROM main.{table_name}')
         min_dt = str(df_range["min_dt"][0]) if df_range["min_dt"][0] is not None else "—"
         max_dt = str(df_range["max_dt"][0]) if df_range["max_dt"][0] is not None else "—"
         col_c.metric("Najraniji datum", min_dt)
@@ -226,7 +226,7 @@ with tab1:
         st.subheader("Učitanih redova po fajlu (top 20)")
         df_by_file = run_sql(f'''
             SELECT source_file, COUNT(*) AS broj
-            FROM "{table_name}"
+            main.{table_name}
             GROUP BY source_file
             ORDER BY broj DESC
             LIMIT 20
@@ -242,7 +242,7 @@ with tab2:
         df_month = run_sql(f'''
             SELECT date_trunc('month', DatumVreme) AS mesec,
                    SUM(COALESCE("NetoTone",0)) AS ukupno_tona
-            FROM "{table_name}"
+            main.{table_name}
             WHERE DatumVreme IS NOT NULL
             GROUP BY 1 ORDER BY 1
         ''')
