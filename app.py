@@ -7,57 +7,23 @@ import streamlit as st
 import io
 
 # ---------- Konstante ----------
-DB_FILE = r"C:\Teretna kola\kola_sk.db"        # glavna baza
-UPDATE_DB = r"C:\Teretna kola\kola_sk.db" # update baza
+DB_FILE = r"C:\Teretna kola\kola_sk.db"  # Putanja do postojeće DuckDB baze
 STATE_FILE = "loaded_files.json"
+TABLE_NAME = "kola"
 
 # ---------- Helperi ----------
 @st.cache_data(show_spinner=False)
-def get_tables(db_path: str):
-    con = duckdb.connect(db_path)
-    try:
-        return [r[0] for r in con.execute(
-            "SELECT table_name FROM duckdb_tables() WHERE database_name IS NULL"
-        ).fetchall()]
-    finally:
-        con.close()
-
-@st.cache_data(show_spinner=False)
 def run_sql(sql: str) -> pd.DataFrame:
-    """Izvrši SQL nad glavnom + update bazom."""
-    con = duckdb.connect()
+    """Izvrši SQL nad glavnom DuckDB bazom."""
+    con = duckdb.connect(DB_FILE)
     try:
-        if os.path.exists(DB_FILE):
-            con.execute(f"ATTACH '{DB_FILE}' AS main")
-        if os.path.exists(UPDATE_DB):
-            con.execute(f"ATTACH '{UPDATE_DB}' AS upd")
-
-        # Kreiranje view za objedinjene podatke
-        tables_main = [r[0] for r in con.execute(
-            "SELECT table_name FROM duckdb_tables() WHERE database_name='main'"
-        ).fetchall()]
-        tables_upd = [r[0] for r in con.execute(
-            "SELECT table_name FROM duckdb_tables() WHERE database_name='upd'"
-        ).fetchall()]
-
-        if "kola" in tables_main:
-            if "kola_update" in tables_upd:
-                con.execute("""
-                    CREATE OR REPLACE VIEW kola_union AS
-                    SELECT * FROM main.kola
-                    UNION ALL
-                    SELECT * FROM upd.kola_update
-                """)
-            else:
-                con.execute("CREATE OR REPLACE VIEW kola_union AS SELECT * FROM main.kola")
-
         return con.execute(sql).fetchdf()
     finally:
         con.close()
 
-# ---------- Funkcije za inicijalizaciju / update ----------
-def init_database(folder_path, table_name="kola"):
-    """Inicijalno punjenje baze iz TXT fajlova (spaja sve u jednu tabelu)."""
+# ---------- Funkcija za update baze ----------
+def update_database(folder_path, table_name=TABLE_NAME):
+    """Dodavanje novih TXT fajlova u postojeću bazu (bez dupliranja)."""
     txt_files = sorted(glob.glob(os.path.join(folder_path, "*.txt")))
     if not txt_files:
         st.warning("⚠️ Nema TXT fajlova u folderu.")
@@ -65,40 +31,15 @@ def init_database(folder_path, table_name="kola"):
 
     con = duckdb.connect(DB_FILE)
     try:
-        first = True
-        for f in txt_files:
-            df = pd.read_csv(f, sep="\t")
-            df["source_file"] = os.path.basename(f)  # dodaj ime fajla
-            con.register("tmp", df)
-
-            if first:
-                con.execute(f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM tmp")
-                first = False
-            else:
-                con.execute(f"INSERT INTO {table_name} SELECT * FROM tmp")
-
-            con.unregister("tmp")
-    finally:
-        con.close()
-
-def update_database(folder_path, table_name="kola"):
-    """Dodavanje novih TXT fajlova u glavnu bazu (bez dupliranja)."""
-    txt_files = sorted(glob.glob(os.path.join(folder_path, "*.txt")))
-    if not txt_files:
-        st.warning("⚠️ Nema TXT fajlova u folderu.")
-        return
-
-    con = duckdb.connect(DB_FILE)
-    try:
-        # sve fajlove koji su već učitani (ako postoji kolona source_file)
+        # Učitaj već dodate fajlove (ako postoji kolona source_file)
         loaded_files = set()
-        if table_name in get_tables(DB_FILE):
+        if table_name in [r[0] for r in con.execute("SHOW TABLES").fetchall()]:
             try:
                 loaded_files = set(
                     con.execute(f"SELECT DISTINCT source_file FROM {table_name}").fetchdf()["source_file"].tolist()
                 )
             except Exception:
-                pass  # možda kolona još ne postoji
+                pass
 
         for f in txt_files:
             fname = os.path.basename(f)
@@ -109,74 +50,27 @@ def update_database(folder_path, table_name="kola"):
             df["source_file"] = fname
             con.register("tmp", df)
 
-            con.execute(f"""
-                CREATE TABLE IF NOT EXISTS {table_name} AS SELECT * FROM tmp
-            """)
-            if not con.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]:
-                # ako je tabela prazna
-                con.execute(f"INSERT INTO {table_name} SELECT * FROM tmp")
-            else:
-                # ubaci samo nove podatke
-                con.execute(f"INSERT INTO {table_name} SELECT * FROM tmp")
+            # Ako tabela ne postoji, kreiraj je
+            con.execute(f"CREATE TABLE IF NOT EXISTS {table_name} AS SELECT * FROM tmp")
+            # Ubaci nove redove
+            con.execute(f"INSERT INTO {table_name} SELECT * FROM tmp")
 
             con.unregister("tmp")
             loaded_files.add(fname)
 
+        st.success("✅ Update završen.")
     finally:
         con.close()
-
-def reload_file(file_path, table_name="kola"):
-    """Ponovo učitavanje jednog TXT fajla u glavnu bazu."""
-    fname = os.path.basename(file_path)
-
-    # učitaj TXT fajl u DataFrame
-    df = pd.read_csv(file_path, sep="\t")
-    df["source_file"] = fname
-
-    con = duckdb.connect(DB_FILE)
-    try:
-        con.register("tmp", df)
-
-        # ako tabela postoji → obriši stare redove za ovaj fajl
-        if table_name in get_tables(DB_FILE):
-            con.execute(f"DELETE FROM {table_name} WHERE source_file = '{fname}'")
-
-        # ubaci nove redove
-        con.execute(f"""
-            CREATE TABLE IF NOT EXISTS {table_name} AS SELECT * FROM tmp
-        """)
-        con.execute(f"INSERT INTO {table_name} SELECT * FROM tmp")
-
-        con.unregister("tmp")
-        con = duckdb.connect(r"C:\Teretna kola\kola.duckdb")
-        print(con.execute("SHOW TABLES").fetchall())
-        con.close()
-    finally:
-        con.close()
-
-def safe_execute(func, msg):
-    try:
-        func()
-        st.success(msg)
-    except Exception as e:
-        st.error(f"Greška: {e}")
 
 # ---------- Sidebar ----------
 st.sidebar.title("⚙️ Podešavanja")
 folder_path = st.sidebar.text_input("Folder sa TXT fajlovima", value=r"C:\Teretna kola")
-st.write("Fajlovi u folderu:", glob.glob(os.path.join(folder_path, "*.txt")))
-table_name = st.sidebar.text_input("Ime tabele", value="kola")
 
-st.sidebar.markdown("---")
-st.sidebar.caption("Napomena: `init_database` pokreće prvo punjenje. Posle toga koristi `update`.")
-
-init_clicked = st.sidebar.button("🚀 Init database")
 update_clicked = st.sidebar.button("➕ Update (dodaj nove fajlove)")
 
 # ---------- Excel upload ----------
 st.sidebar.subheader("📂 Uvoz Excela (Stanje SK)")
 uploaded_excel = st.sidebar.file_uploader("Izaberi Excel fajl (.xlsx)", type=["xlsx"])
-
 if uploaded_excel and st.sidebar.button("📥 Učitaj u bazu"):
     try:
         df_stanje = pd.read_excel(uploaded_excel)
@@ -190,12 +84,16 @@ if uploaded_excel and st.sidebar.button("📥 Učitaj u bazu"):
         st.error(f"❌ Greška pri uvozu Excela: {e}")
 
 # ---------- Akcije ----------
-if init_clicked:
-    safe_execute(lambda: init_database(folder_path, table_name), "✅ Inicijalno punjenje završeno.")
 if update_clicked:
-    safe_execute(lambda: update_database(folder_path, table_name), "✅ Update završen.")
+    update_database(folder_path)
 
-
+# ---------- Streamlit dashboard ----------
+st.title("🚃 Teretna kola SK — kontrolna tabla")
+try:
+    df_cnt = run_sql(f'SELECT COUNT(*) AS broj_redova FROM {TABLE_NAME}')
+    st.metric("Ukupan broj redova", f"{int(df_cnt['broj_redova'][0]):,}".replace(",", "."))
+except Exception as e:
+    st.error(f"Ne mogu da pročitam bazu: {e}")
 # ---------- Streamlit dashboard ----------
 st.title("🚃 Teretna kola SK — kontrolna tabla")
 
