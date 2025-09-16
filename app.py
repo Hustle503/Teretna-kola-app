@@ -13,33 +13,31 @@ TABLE_NAME = "kola"
 # ---------- Helper funkcija ----------
 @st.cache_data(show_spinner=False)
 def run_sql(sql: str) -> pd.DataFrame:
-    """Izvrši SQL nad glavnom DuckDB bazom i vrati DataFrame."""
     con = duckdb.connect(DB_FILE)
     try:
         return con.execute(sql).fetchdf()
     finally:
         con.close()
-
 # ---------- Funkcija za dodavanje pojedinačnog TXT fajla ----------
+# ---------- Dodavanje TXT fajla ----------
 def add_txt_file(uploaded_file, table_name=TABLE_NAME):
     if uploaded_file is None:
         st.warning("⚠️ Niste izabrali fajl.")
         return
 
-    try:
-        df = pd.read_csv(uploaded_file, sep="\t")
-        df["source_file"] = uploaded_file.name
+    df = pd.read_csv(uploaded_file, sep="\t")
+    df.columns = [col.strip() for col in df.columns]  # normalizacija kolona
+    df["source_file"] = uploaded_file.name
 
-        con = duckdb.connect(DB_FILE)
-
-        # Ako tabela ne postoji, kreiraj je
-        if TABLE_NAME not in [r[0] for r in con.execute("SHOW TABLES").fetchall()]:
-            con.execute(f"CREATE TABLE {TABLE_NAME} AS SELECT * FROM df")
-        else:
-            con.execute(f"INSERT INTO {TABLE_NAME} SELECT * FROM df")
-
-        con.close()
-        st.success(f"✅ Fajl '{uploaded_file.name}' je dodat u bazu ({len(df)} redova).")
+    con = duckdb.connect(DB_FILE)
+    if table_name not in [r[0] for r in con.execute("SHOW TABLES").fetchall()]:
+        con.execute(f"CREATE TABLE {table_name} AS SELECT * FROM df")
+    else:
+        con.register("tmp", df)
+        con.execute(f"INSERT INTO {table_name} SELECT * FROM tmp")
+        con.unregister("tmp")
+    con.close()
+    st.success(f"✅ Fajl '{uploaded_file.name}' dodat u bazu ({len(df)} redova).")
     except Exception as e:
         st.error(f"❌ Greška pri dodavanju fajla: {e}")
 
@@ -82,11 +80,19 @@ def update_database(folder_path, table_name=TABLE_NAME):
 # ---------- Streamlit UI ----------
 st.title("🚃 Teretna kola — DuckDB")
 
-# --- Dodavanje pojedinačnog TXT fajla ---
-st.subheader("➕ Dodaj TXT fajl u bazu")
-uploaded_file = st.file_uploader("Izaberite TXT fajl", type=["txt"], key="txt_uploader")
-if st.button("Dodaj fajl u bazu", key="add_file_button"):
+uploaded_file = st.file_uploader("Izaberite TXT fajl", type=["txt"])
+if st.button("Dodaj fajl u bazu"):
     add_txt_file(uploaded_file)
+
+# ---------- Pregled tabele ----------
+st.subheader("📊 Pregled tabele u bazi")
+try:
+    df_preview = run_sql(f'SELECT * FROM "{TABLE_NAME}" LIMIT 20')
+    st.dataframe(df_preview, use_container_width=True)
+    total_rows = run_sql(f'SELECT COUNT(*) AS cnt FROM "{TABLE_NAME}"')
+    st.write("Ukupan broj redova:", total_rows["cnt"][0])
+except Exception as e:
+    st.error(f"Greška pri čitanju baze: {e}")
 
 # --- Sidebar za update baze i Excel upload ---
 st.sidebar.title("⚙️ Podešavanja")
