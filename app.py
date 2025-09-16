@@ -7,14 +7,14 @@ import streamlit as st
 import io
 import polars as pl
 import json
-st.write("📂 Trenutni folder:", os.getcwd())
-st.write("📁 Putanja do baze:", DB_FILE)
+
 # ---------- Konstante ----------
 DB_FILE = r"C:\Teretna kola\kola_sk.db"
 TABLE_NAME = "kola"
 STATE_FILE = "loaded_files.json"
 DEFAULT_FOLDER = r"C:\Teretna kola"
-
+st.write("📂 Trenutni folder:", os.getcwd())
+st.write("📁 Putanja do baze:", DB_FILE)
 # ---------- Helper funkcije ----------
 @st.cache_data(show_spinner=False)
 def run_sql(sql: str) -> pd.DataFrame:
