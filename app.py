@@ -10,50 +10,32 @@ import io
 DB_FILE = r"C:\Teretna kola\kola_sk.db"
 TABLE_NAME = "kola"
 
+# ---------- Funkcija za dodavanje pojedinačnog fajla ----------
 def add_txt_file(uploaded_file, table_name=TABLE_NAME):
-    """Dodaje izabrani TXT fajl u DuckDB bazu."""
     if uploaded_file is None:
         st.warning("⚠️ Niste izabrali fajl.")
         return
-    
+
     try:
         df = pd.read_csv(uploaded_file, sep="\t")
         df["source_file"] = uploaded_file.name
 
         con = duckdb.connect(DB_FILE)
-        con.register("tmp", df)
 
         # Ako tabela ne postoji, kreiraj je
-        con.execute(f"CREATE TABLE IF NOT EXISTS {table_name} AS SELECT * FROM tmp")
-        # Ubaci nove redove
-        con.execute(f"INSERT INTO {table_name} SELECT * FROM tmp")
-        con.unregister("tmp")
-        con.close()
+        if table_name not in [r[0] for r in con.execute("SHOW TABLES").fetchall()]:
+            con.execute(f"CREATE TABLE {table_name} AS SELECT * FROM df")
+        else:
+            con.execute(f"INSERT INTO {table_name} SELECT * FROM df")
 
+        con.close()
         st.success(f"✅ Fajl '{uploaded_file.name}' je dodat u bazu ({len(df)} redova).")
     except Exception as e:
         st.error(f"❌ Greška pri dodavanju fajla: {e}")
 
-st.title("🚃 Teretna kola SK — dodavanje fajla")
-
-uploaded_file = st.file_uploader("Izaberite TXT fajl za dodavanje", type=["txt"])
-
-if st.button("➕ Dodaj u bazu"):
-    add_txt_file(uploaded_file)
-
-# ---------- Helperi ----------
-@st.cache_data(show_spinner=False)
-def run_sql(sql: str) -> pd.DataFrame:
-    """Izvrši SQL nad glavnom DuckDB bazom."""
-    con = duckdb.connect(DB_FILE)
-    try:
-        return con.execute(sql).fetchdf()
-    finally:
-        con.close()
-
-# ---------- Funkcija za update baze ----------
+# ---------- Funkcija za update baze iz foldera ----------
 def update_database(folder_path, table_name=TABLE_NAME):
-    """Dodavanje novih TXT fajlova u postojeću bazu (bez dupliranja)."""
+    """Dodaje nove TXT fajlove iz foldera u bazu, bez dupliranja."""
     txt_files = sorted(glob.glob(os.path.join(folder_path, "*.txt")))
     if not txt_files:
         st.warning("⚠️ Nema TXT fajlova u folderu.")
@@ -61,7 +43,7 @@ def update_database(folder_path, table_name=TABLE_NAME):
 
     con = duckdb.connect(DB_FILE)
     try:
-        # Učitaj već dodate fajlove (ako postoji kolona source_file)
+        # Učitaj već dodate fajlove
         loaded_files = set()
         if table_name in [r[0] for r in con.execute("SHOW TABLES").fetchall()]:
             try:
@@ -74,23 +56,44 @@ def update_database(folder_path, table_name=TABLE_NAME):
         for f in txt_files:
             fname = os.path.basename(f)
             if fname in loaded_files:
-                continue  # fajl je već ubačen
+                continue  # već ubačen
 
             df = pd.read_csv(f, sep="\t")
             df["source_file"] = fname
-            con.register("tmp", df)
-
-            # Ako tabela ne postoji, kreiraj je
-            con.execute(f"CREATE TABLE IF NOT EXISTS {table_name} AS SELECT * FROM tmp")
-            # Ubaci nove redove
-            con.execute(f"INSERT INTO {table_name} SELECT * FROM tmp")
-
-            con.unregister("tmp")
+            if table_name not in [r[0] for r in con.execute("SHOW TABLES").fetchall()]:
+                con.execute(f"CREATE TABLE {table_name} AS SELECT * FROM df")
+            else:
+                con.execute(f"INSERT INTO {table_name} SELECT * FROM df")
             loaded_files.add(fname)
 
-        st.success("✅ Update završen.")
+        st.success("✅ Update baze završen.")
     finally:
         con.close()
+
+# ---------- Streamlit UI ----------
+st.title("🚃 Teretna kola — DuckDB")
+
+# --- Dodavanje pojedinačnog fajla ---
+st.subheader("➕ Dodaj TXT fajl u bazu")
+uploaded_file = st.file_uploader("Izaberite TXT fajl", type=["txt"])
+if st.button("Dodaj fajl u bazu"):
+    add_txt_file(uploaded_file)
+
+# --- Update baze iz foldera ---
+st.sidebar.title("⚙️ Podešavanja")
+folder_path = st.sidebar.text_input("Folder sa TXT fajlovima", value=r"C:\Teretna kola")
+if st.sidebar.button("Update baze iz foldera"):
+    update_database(folder_path)
+
+# --- Pregled tabele ---
+st.subheader("📊 Pregled tabele u bazi")
+try:
+    con = duckdb.connect(DB_FILE)
+    df_preview = con.execute(f"SELECT * FROM {TABLE_NAME} LIMIT 20").fetchdf()
+    st.dataframe(df_preview, use_container_width=True)
+    con.close()
+except Exception as e:
+    st.error(f"Greška pri čitanju baze: {e}")
 
 # ---------- Sidebar ----------
 st.sidebar.title("⚙️ Podešavanja")
