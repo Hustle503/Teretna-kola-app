@@ -38,8 +38,7 @@ def add_txt_file(uploaded_file, table_name=TABLE_NAME):
         con.unregister("tmp")
     con.close()
     st.success(f"✅ Fajl '{uploaded_file.name}' dodat u bazu ({len(df)} redova).")
-    except Exception as e:
-        st.error(f"❌ Greška pri dodavanju fajla: {e}")
+    
 
 # ---------- Funkcija za update baze iz foldera ----------
 def update_database(folder_path, table_name=TABLE_NAME):
