@@ -79,8 +79,9 @@ if st.button("Dodaj fajl u bazu"):
 
 # --- Sidebar za update baze ---
 st.sidebar.title("⚙️ Podešavanja")
-folder_path = st.sidebar.text_input("Folder sa TXT fajlovima", value=r"C:\Teretna kola")
-if st.sidebar.button("➕ Update baze iz foldera"):
+folder_path = st.sidebar.text_input("Folder sa TXT fajlovima", value=r"C:\Teretna kola", key="folder_path")
+
+if st.sidebar.button("➕ Update baze iz foldera", key="update_button"):
     update_database(folder_path)
 
 # --- Pregled tabele ---
