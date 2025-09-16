@@ -57,7 +57,7 @@ def run_sql(sql: str) -> pd.DataFrame:
 
 # ---------- Funkcije za inicijalizaciju / update ----------
 def init_database(folder_path, table_name="kola"):
-    """Inicijalno punjenje baze iz TXT fajlova."""
+    """Inicijalno punjenje baze iz TXT fajlova (spaja sve u jednu tabelu)."""
     txt_files = sorted(glob.glob(os.path.join(folder_path, "*.txt")))
     if not txt_files:
         st.warning("⚠️ Nema TXT fajlova u folderu.")
@@ -65,30 +65,63 @@ def init_database(folder_path, table_name="kola"):
 
     con = duckdb.connect(DB_FILE)
     try:
+        first = True
         for f in txt_files:
-            df = pd.read_csv(f, sep="\t")  # pretpostavka: tab-delimited
+            df = pd.read_csv(f, sep="\t")
+            df["source_file"] = os.path.basename(f)  # dodaj ime fajla
             con.register("tmp", df)
-            con.execute(f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM tmp")
+
+            if first:
+                con.execute(f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM tmp")
+                first = False
+            else:
+                con.execute(f"INSERT INTO {table_name} SELECT * FROM tmp")
+
             con.unregister("tmp")
     finally:
         con.close()
 
 def update_database(folder_path, table_name="kola"):
-    """Dodavanje novih fajlova u update bazu."""
+    """Dodavanje novih TXT fajlova u glavnu bazu (bez dupliranja)."""
     txt_files = sorted(glob.glob(os.path.join(folder_path, "*.txt")))
     if not txt_files:
         st.warning("⚠️ Nema TXT fajlova u folderu.")
         return
 
-    con = duckdb.connect(UPDATE_DB)
+    con = duckdb.connect(DB_FILE)
     try:
+        # sve fajlove koji su već učitani (ako postoji kolona source_file)
+        loaded_files = set()
+        if table_name in get_tables(DB_FILE):
+            try:
+                loaded_files = set(
+                    con.execute(f"SELECT DISTINCT source_file FROM {table_name}").fetchdf()["source_file"].tolist()
+                )
+            except Exception:
+                pass  # možda kolona još ne postoji
+
         for f in txt_files:
+            fname = os.path.basename(f)
+            if fname in loaded_files:
+                continue  # fajl je već ubačen
+
             df = pd.read_csv(f, sep="\t")
+            df["source_file"] = fname
             con.register("tmp", df)
+
             con.execute(f"""
-                CREATE TABLE IF NOT EXISTS {table_name}_update AS SELECT * FROM tmp
+                CREATE TABLE IF NOT EXISTS {table_name} AS SELECT * FROM tmp
             """)
+            if not con.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]:
+                # ako je tabela prazna
+                con.execute(f"INSERT INTO {table_name} SELECT * FROM tmp")
+            else:
+                # ubaci samo nove podatke
+                con.execute(f"INSERT INTO {table_name} SELECT * FROM tmp")
+
             con.unregister("tmp")
+            loaded_files.add(fname)
+
     finally:
         con.close()
 
