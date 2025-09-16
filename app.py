@@ -146,51 +146,6 @@ if init_clicked:
 if update_clicked:
     safe_execute(lambda: update_database(folder_path, table_name), "✅ Update završen.")
 
-import os
-import time
-import duckdb
-import pandas as pd
-import streamlit as st
-import io
-
-# ---------- Konstante ----------
-DB_FILE = r"C:\Teretna kola\kola.duckdb"
-UPDATE_DB = r"C:\Teretna kola\kola_update.duckdb"
-table_name = "kola"  # glavna tabela
-excel_table = "stanje"  # tabela iz Excel fajla
-
-# ---------- Helper funkcije ----------
-@st.cache_data(show_spinner=False)
-def run_sql(sql: str) -> pd.DataFrame:
-    con = duckdb.connect()
-    try:
-        if os.path.exists(DB_FILE):
-            con.execute(f"ATTACH '{DB_FILE}' AS main")
-        if os.path.exists(UPDATE_DB):
-            con.execute(f"ATTACH '{UPDATE_DB}' AS upd")
-
-        # Kreiranje zajedničkog view-a
-        tables_main = [r[0] for r in con.execute(
-            "SELECT table_name FROM duckdb_tables() WHERE database_name='main'"
-        ).fetchall()]
-        tables_upd = [r[0] for r in con.execute(
-            "SELECT table_name FROM duckdb_tables() WHERE database_name='upd'"
-        ).fetchall()]
-
-        if "kola" in tables_main:
-            if "kola_update" in tables_upd:
-                con.execute("""
-                    CREATE OR REPLACE VIEW kola_union AS
-                    SELECT * FROM main.kola
-                    UNION ALL
-                    SELECT * FROM upd.kola_update
-                """)
-            else:
-                con.execute("CREATE OR REPLACE VIEW kola_union AS SELECT * FROM main.kola")
-
-        return con.execute(sql).fetchdf()
-    finally:
-        con.close()
 
 # ---------- Streamlit dashboard ----------
 st.title("🚃 Teretna kola SK — kontrolna tabla")
