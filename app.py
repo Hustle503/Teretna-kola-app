@@ -108,7 +108,7 @@ if uploaded_excel and st.sidebar.button("📥 Učitaj u bazu"):
         st.error(f"❌ Greška pri uvozu Excela: {e}")
 
 # ---------- Akcije ----------
-if update_clicked:
+if st.sidebar.button("➕ Update baze iz foldera"):
     update_database(folder_path)
 
 # ---------- Streamlit dashboard ----------
