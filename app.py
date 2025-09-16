@@ -11,6 +11,7 @@ import json
 # ---------- Konstante ----------
 DB_FILE = r"C:\Teretna kola\kola_sk.db"
 TABLE_NAME = "kola"
+
 STATE_FILE = "loaded_files.json"
 DEFAULT_FOLDER = r"C:\Teretna kola"
 st.write("📂 Trenutni folder:", os.getcwd())
@@ -53,11 +54,20 @@ def parse_txt(path) -> pl.DataFrame:
                 "Datum": line[27:35].strip(),
                 "Vreme": line[35:39].strip(),
                 "Roba": line[41:47].strip(),
+                "Rid": line[47:48].strip(),
+                "UN broj": line[48:52].strip(),
                 "Reon": line[61:66].strip(),
                 "tara": line[78:81].strip(),
                 "NetoTone": line[83:86].strip(),
-                "Broj vagona": line[0:12].strip(),
-                "Broj kola": line[2:11].strip(),
+                "dužina vagona": line[88:91].strip(),
+                "broj osovina": line[98:100].strip(),
+                "Otp. država": line[123:125].strip(),
+                "Otp st": line[125:130].strip(),
+                "Uputna država": line[130:132].strip(),
+                "Up st": line[132:137].strip(),
+                "Broj kola": line[0:12].strip(),
+                "Broj vagona": line[2:12].strip(),
+                "Redni broj kola": line[57:59].strip(),
                 "source_file": os.path.basename(path),
             })
 
