@@ -33,10 +33,10 @@ def add_txt_file(uploaded_file, table_name=TABLE_NAME):
         con = duckdb.connect(DB_FILE)
 
         # Ako tabela ne postoji, kreiraj je
-        if table_name not in [r[0] for r in con.execute("SHOW TABLES").fetchall()]:
-            con.execute(f"CREATE TABLE {table_name} AS SELECT * FROM df")
+        if TABLE_NAME not in [r[0] for r in con.execute("SHOW TABLES").fetchall()]:
+            con.execute(f"CREATE TABLE {TABLE_NAME} AS SELECT * FROM df")
         else:
-            con.execute(f"INSERT INTO {table_name} SELECT * FROM df")
+            con.execute(f"INSERT INTO {TABLE_NAME} SELECT * FROM df")
 
         con.close()
         st.success(f"✅ Fajl '{uploaded_file.name}' je dodat u bazu ({len(df)} redova).")
@@ -54,10 +54,10 @@ def update_database(folder_path, table_name=TABLE_NAME):
     con = duckdb.connect(DB_FILE)
     try:
         loaded_files = set()
-        if table_name in [r[0] for r in con.execute("SHOW TABLES").fetchall()]:
+        if TABLE_NAME in [r[0] for r in con.execute("SHOW TABLES").fetchall()]:
             try:
                 loaded_files = set(
-                    con.execute(f"SELECT DISTINCT source_file FROM {table_name}").fetchdf()["source_file"].tolist()
+                    con.execute(f"SELECT DISTINCT source_file FROM {TABLE_NAME}").fetchdf()["source_file"].tolist()
                 )
             except Exception:
                 pass
@@ -69,10 +69,10 @@ def update_database(folder_path, table_name=TABLE_NAME):
 
             df = pd.read_csv(f, sep="\t")
             df["source_file"] = fname
-            if table_name not in [r[0] for r in con.execute("SHOW TABLES").fetchall()]:
-                con.execute(f"CREATE TABLE {table_name} AS SELECT * FROM df")
+            if TABLE_NAME not in [r[0] for r in con.execute("SHOW TABLES").fetchall()]:
+                con.execute(f"CREATE TABLE {TABLE_NAME} AS SELECT * FROM df")
             else:
-                con.execute(f"INSERT INTO {table_name} SELECT * FROM df")
+                con.execute(f"INSERT INTO {TABLE_NAME} SELECT * FROM df")
             loaded_files.add(fname)
 
         st.success("✅ Update baze završen.")
@@ -147,13 +147,13 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = tabs
 with tab1:
     col_a, col_b, col_c, col_d = st.columns(4)
     try:
-        df_cnt = run_sql(f'SELECT COUNT(*) AS broj_redova FROM main.{table_name}')
+        df_cnt = run_sql(f'SELECT COUNT(*) AS broj_redova FROM main.{TABLE_NAME}')
         col_a.metric("Ukupan broj redova", f"{int(df_cnt['broj_redova'][0]):,}".replace(",", "."))
 
-        df_files = run_sql(f'SELECT COUNT(DISTINCT source_file) AS fajlova FROM main.{table_name}')
+        df_files = run_sql(f'SELECT COUNT(DISTINCT source_file) AS fajlova FROM main.{TABLE_NAME}')
         col_b.metric("Učitanih fajlova", int(df_files["fajlova"][0]))
 
-        df_range = run_sql(f'SELECT MIN(DatumVreme) AS min_dt, MAX(DatumVreme) AS max_dt FROM main.{table_name}')
+        df_range = run_sql(f'SELECT MIN(DatumVreme) AS min_dt, MAX(DatumVreme) AS max_dt FROM main.{TABLE_NAME}')
         min_dt = str(df_range["min_dt"][0]) if df_range["min_dt"][0] is not None else "—"
         max_dt = str(df_range["max_dt"][0]) if df_range["max_dt"][0] is not None else "—"
         col_c.metric("Najraniji datum", min_dt)
@@ -163,7 +163,7 @@ with tab1:
         st.subheader("Učitanih redova po fajlu (top 20)")
         df_by_file = run_sql(f'''
             SELECT source_file, COUNT(*) AS broj
-            main.{table_name}
+            main.{TABLE_NAME}
             GROUP BY source_file
             ORDER BY broj DESC
             LIMIT 20
@@ -179,7 +179,7 @@ with tab2:
         df_month = run_sql(f'''
             SELECT date_trunc('month', DatumVreme) AS mesec,
                    SUM(COALESCE("NetoTone",0)) AS ukupno_tona
-            main.{table_name}
+            main.{TABLE_NAME}
             WHERE DatumVreme IS NOT NULL
             GROUP BY 1 ORDER BY 1
         ''')
@@ -188,7 +188,7 @@ with tab2:
         st.subheader("Top 20 stanica po broju vagona")
         df_sta = run_sql(f'''
             SELECT "Stanica", COUNT(*) AS broj
-            FROM "{table_name}"
+            FROM "{TABLE_NAME}"
             GROUP BY "Stanica"
             ORDER BY broj DESC
             LIMIT 20
@@ -200,7 +200,7 @@ with tab2:
 # ---------- Tab 3: SQL upiti ----------
 with tab3:
     st.subheader("Piši svoj SQL")
-    default_sql = f'SELECT * FROM "{table_name}" LIMIT 100'
+    default_sql = f'SELECT * FROM "{TABLE_NAME}" LIMIT 100'
     user_sql = st.text_area("SQL:", height=160, value=default_sql)
     run_btn = st.button("▶️ Izvrši upit", key="sql_btn")
     if run_btn:
@@ -228,7 +228,7 @@ with tab4:
     if cols:
         cols_sql = ", ".join([f'"{c}"' for c in cols])
         try:
-            df_preview = run_sql(f'SELECT {cols_sql} FROM "{table_name}" LIMIT {limit}')
+            df_preview = run_sql(f'SELECT {cols_sql} FROM "{TABLE_NAME}" LIMIT {limit}')
             st.dataframe(df_preview, use_container_width=True)
         except Exception as e:
             st.error(f"Greška pri čitanju: {e}")
@@ -241,7 +241,7 @@ with tab5:
             df_last = run_sql(f'''
                 SELECT s.SerijaIpodserija, k.*
                 FROM "{excel_table}" s
-                JOIN "{table_name}" k
+                JOIN "{TABLE_NAME}" k
                   ON CAST(s.SerijaIpodserija AS TEXT) = REPLACE(k.broj_kola_bez_rezima_i_kb,' ','')
                 QUALIFY ROW_NUMBER() OVER (
                     PARTITION BY s.SerijaIpodserija ORDER BY k.DatumVreme DESC
@@ -262,7 +262,7 @@ with tab6:
         try:
             df_search = run_sql(f'''
                 SELECT *
-                FROM "{table_name}"
+                FROM "{TABLE_NAME}"
                 WHERE "Broj kola" LIKE '%{broj_kola_input}%'
                   AND "DatumVreme" BETWEEN '{start_date}' AND '{end_date}'
                 ORDER BY "DatumVreme" DESC
@@ -284,7 +284,7 @@ with tab7:
                 SELECT k.Serija, k.Stanica, s.TIP, ROW_NUMBER() OVER (
                     PARTITION BY k.broj_kola_bez_rezima_i_kb ORDER BY k.DatumVreme DESC
                 ) AS rn
-                FROM "{table_name}" k
+                FROM "{TABLE_NAME}" k
                 JOIN "{excel_table}" s
                   ON k.broj_kola_bez_rezima_i_kb = s.SerijaIpodserija
             )
@@ -301,9 +301,9 @@ with tab8:
     st.subheader("🚂 Kretanje 4098 kola – samo TIP 0")
     try:
         # Proveri da li postoje potrebne tabele
-        tables = run_sql("SELECT table_name FROM duckdb_tables()")
-        needed_tables = [table_name, excel_table, "stanice"]
-        missing = [t for t in needed_tables if t not in tables["table_name"].tolist()]
+        tables = run_sql("SELECT TABLE_NAME FROM duckdb_tables()")
+        needed_tables = [TABLE_NAME, excel_table, "stanice"]
+        missing = [t for t in needed_tables if t not in tables["TABLE_NAME"].tolist()]
         if missing:
             st.warning(f"⚠️ Nedostaju tabele: {', '.join(missing)}. Ne mogu da prikažem tab.")
         else:
@@ -324,7 +324,7 @@ with tab8:
                             ORDER BY k.DatumVreme DESC
                         ) AS rn
                     FROM "{excel_table}" s
-                    LEFT JOIN "{table_name}" k
+                    LEFT JOIN "{TABLE_NAME}" k
                       ON TRIM(k.broj_kola_bez_rezima_i_kb) = TRIM(s.SerijaIpodserija)
                     LEFT JOIN stanice st
                       ON k.Stanica = st.Sifra
@@ -371,8 +371,8 @@ with tab9:
     st.subheader("🚂 Kretanje 4098 kola – samo TIP 1")
     try:
         # Provera postojanja tabela
-        tables = run_sql("SELECT table_name FROM duckdb_tables()")
-        missing = [t for t in [table_name, excel_table, "stanice"] if t not in tables["table_name"].tolist()]
+        tables = run_sql("SELECT TABLE_NAME FROM duckdb_tables()")
+        missing = [t for t in [TABLE_NAME, excel_table, "stanice"] if t not in tables["TABLE_NAME"].tolist()]
         if missing:
             st.warning(f"⚠️ Nedostaju tabele: {', '.join(missing)}. Ne mogu da prikažem tab.")
         else:
@@ -393,7 +393,7 @@ with tab9:
                             ORDER BY k.DatumVreme DESC
                         ) AS rn
                     FROM "{excel_table}" s
-                    LEFT JOIN "{table_name}" k
+                    LEFT JOIN "{TABLE_NAME}" k
                       ON TRIM(k.broj_kola_bez_rezima_i_kb) = TRIM(s.SerijaIpodserija)
                     LEFT JOIN stanice st
                       ON k.Stanica = st.Sifra
@@ -439,8 +439,8 @@ with tab9:
 with tab10:
     st.subheader("📊 Pivot po seriji i stanicama")
     try:
-        tables = run_sql("SELECT table_name FROM duckdb_tables()")
-        missing = [t for t in [table_name, excel_table] if t not in tables["table_name"].tolist()]
+        tables = run_sql("SELECT TABLE_NAME FROM duckdb_tables()")
+        missing = [t for t in [TABLE_NAME, excel_table] if t not in tables["TABLE_NAME"].tolist()]
         if missing:
             st.warning(f"⚠️ Nedostaju tabele: {', '.join(missing)}. Ne mogu da prikažem tab.")
         else:
@@ -450,7 +450,7 @@ with tab10:
                         PARTITION BY k.broj_kola_bez_rezima_i_kb
                         ORDER BY k.DatumVreme DESC
                     ) AS rn
-                    FROM "{table_name}" k
+                    FROM "{TABLE_NAME}" k
                     JOIN "{excel_table}" s
                       ON k.broj_kola_bez_rezima_i_kb = s.SerijaIpodserija
                 )
