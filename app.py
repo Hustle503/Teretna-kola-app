@@ -1931,146 +1931,135 @@ if selected_tab == "📏 Km prazno/tovareno":
 # Tab 15 – Revizija
 # =============================
 
+import pandas as pd
+import streamlit as st
+
+# --- Inicijalizacija session_state ---
 if "revizija_df" not in st.session_state:
     st.session_state["revizija_df"] = None
 if "revizija_filtered_df" not in st.session_state:
     st.session_state["revizija_filtered_df"] = None
-if "revizija_tip" not in st.session_state:
-    st.session_state["revizija_tip"] = None
-if "revizija_danas" not in st.session_state:
-    st.session_state["revizija_danas"] = pd.to_datetime("today").normalize()
 if "revizija_prikazano" not in st.session_state:
     st.session_state["revizija_prikazano"] = False
 if "revizija_dana_input" not in st.session_state:
     st.session_state["revizija_dana_input"] = 30
+if "revizija_danas" not in st.session_state:
+    st.session_state["revizija_danas"] = pd.to_datetime("today").normalize()
 
 if selected_tab == "🔧 Revizija":
     st.subheader("🔧 Revizija")
 
     # -----------------------
-    # 🔹 Filteri u 3 kolone
+    # Filteri u 3 kolone
     # -----------------------
     col1, col2, col3 = st.columns([1, 1.5, 1.5])
 
-    # 🚦 TIP filter
+    # TIP filter
     with col1:
         st.markdown("<h4 style='text-align: center; font-size:18px;'>🚦 Izaberi TIP</h4>", unsafe_allow_html=True)
         tip_options = ["TIP 0 (istekla)", "TIP 1 (važeća)", "Sva kola"]
         tip_filter = st.selectbox("", tip_options, index=2)
 
-    # 🚃 Broj(evi) kola
+    # Broj kola
     with col2:
         st.markdown("<h4 style='text-align: center; font-size:18px;'>🚃 Broj kola (opciono)</h4>", unsafe_allow_html=True)
         broj_kola_input = st.text_input("", value="", key="rev_broj_kola")
 
-    # 🔎 Opcioni filteri
+    # Opcioni filteri
     with col3:
-        st.markdown(
-            "<h4 style='text-align: center; font-size:18px; margin-bottom:24px;'>🔎 Opcioni filteri</h4>",
-            unsafe_allow_html=True
-        )
+        st.markdown("<h4 style='text-align: center; font-size:18px; margin-bottom:24px;'>🔎 Opcioni filteri</h4>", unsafe_allow_html=True)
         with st.expander("Izaberi", expanded=False):
             try:
-                stanje = pd.read_excel("stanje SK.xlsx")
-                stanje["3"] = stanje["3"].astype(str).str.zfill(3)  # obezbeđuje da ima 3 cifre
-                serije = sorted(stanje["3"].dropna().unique().tolist())
-                sel_serija = st.multiselect("Serija", serije)
-            except:
-                sel_serija = []
+                # Učitavanje Excel fajlova samo jednom
+                df_stanje = pd.read_excel("Stanje SK.xlsx")
+                df_stanje = df_stanje.rename(columns={"3": "Serija"})
+                df_stanje = df_stanje[["Broj kola", "Serija", "PR", "NR", "TelegBaza", "Napomena"]]
 
-            try:
-                radionice = pd.read_excel("Redovne opravke.xlsx")
-                sel_radionica = st.multiselect("Radionica", radionice["Radionica"].dropna().unique().tolist())
-            except:
-                sel_radionica = []
+                df_opravke = pd.read_excel("Redovne opravke.xlsx")
+                df_opravke.columns = df_opravke.columns.str.strip()
+                df_opravke["Datum revizije"] = pd.to_datetime(df_opravke["Datum revizije"], errors="coerce")
+                df_opravke["Datum naredne revizije"] = pd.to_datetime(df_opravke["Datum naredne revizije"], errors="coerce")
 
-            try:
-                vrste = pd.read_excel("Redovne opravke.xlsx")
-                sel_vrsta = st.multiselect("Vrsta", vrste["Vrsta"].dropna().unique().tolist())
-            except:
-                sel_vrsta = []
-
-            try:
-                datumi = pd.read_excel("Redovne opravke.xlsx")
+                # Filteri multiselect
+                sel_serija = st.multiselect("Serija", sorted(df_stanje["Serija"].dropna().unique().tolist()))
+                sel_radionica = st.multiselect(
+                    "Radionica",
+                    df_opravke["Radionica"].dropna().unique().tolist() if "Radionica" in df_opravke.columns else []
+                )
+                sel_vrsta = st.multiselect(
+                    "Vrsta",
+                    df_opravke["Vrsta"].dropna().unique().tolist() if "Vrsta" in df_opravke.columns else []
+                )
                 sel_datum = st.date_input("Datum revizije", [])
-            except:
-                sel_datum = []
+
+            except FileNotFoundError as e:
+                st.error(f"Fajl nije pronađen: {e}")
+                df_stanje = pd.DataFrame()
+                df_opravke = pd.DataFrame()
+                sel_serija, sel_radionica, sel_vrsta, sel_datum = [], [], [], []
 
     # -----------------------
     # Dugme za prikaz podataka
     # -----------------------
     if st.button("📌 Prikaži reviziju"):
         try:
-            # --- Učitavanje Excel tabela ---
-            df_stanje = pd.read_excel("stanje SK.xlsx")
-            df_opravke = pd.read_excel("Redovne opravke.xlsx")
+            if df_stanje.empty or df_opravke.empty:
+                st.warning("Excel fajlovi nisu učitani.")
+            else:
+                # Uzmi poslednji unos po Broju kola
+                df_opravke_latest = df_opravke.sort_values("Datum revizije").groupby("Broj kola").tail(1)
 
-            # Odabir i preimenovanje kolona iz stanja SK
-            df_stanje = df_stanje[["Broj kola", "3", "PR", "NR", "TelegBaza", "Napomena"]]
-            df_stanje = df_stanje.rename(columns={"3": "Serija"})
+                # Merge tabele
+                df = df_stanje.merge(df_opravke_latest, on="Broj kola", how="left")
 
-            # Poslednji unos po kolu iz Redovne opravke
-            df_opravke["Datum revizije"] = pd.to_datetime(df_opravke["Datum revizije"], errors="coerce")
-            df_opravke["Datum naredne revizije"] = pd.to_datetime(df_opravke["Datum naredne revizije"], errors="coerce")
-            df_opravke = df_opravke.sort_values("Datum revizije").groupby("Broj kola").tail(1)
+                # Datum za TIP
+                df["Datum_za_tip"] = df["Datum naredne revizije"].fillna(df["NR"])
+                danas = pd.to_datetime("today").normalize()
 
-            # Merge tabela
-            df = df_stanje.merge(df_opravke, on="Broj kola", how="left")
+                df["TIP"] = None
+                df.loc[df["Datum_za_tip"].notna() & (df["Datum_za_tip"] < danas), "TIP"] = "TIP 0 (istekla)"
+                df.loc[df["Datum_za_tip"].notna() & (df["Datum_za_tip"] >= danas), "TIP"] = "TIP 1 (važeća)"
+                df.loc[df["Datum_za_tip"].isna(), "TIP"] = "Nepoznato"
 
-            # Datum za određivanje TIP-a
-            df["Datum_za_tip"] = df["Datum naredne revizije"].fillna(df["NR"])
-            danas = pd.to_datetime("today").normalize()
+                # Primena filtera
+                if broj_kola_input:
+                    brojevi = [b.strip() for b in broj_kola_input.split(",") if b.strip()]
+                    df = df[df["Broj kola"].isin(brojevi)]
 
-            df["TIP"] = None
-            df.loc[df["Datum_za_tip"].notna() & (df["Datum_za_tip"] < danas), "TIP"] = "TIP 0 (istekla)"
-            df.loc[df["Datum_za_tip"].notna() & (df["Datum_za_tip"] >= danas), "TIP"] = "TIP 1 (važeća)"
-            df.loc[df["Datum_za_tip"].isna(), "TIP"] = "Nepoznato"
+                if sel_serija:
+                    df = df[df["Serija"].isin(sel_serija)]
+                if sel_radionica and "Radionica" in df.columns:
+                    df = df[df["Radionica"].isin(sel_radionica)]
+                if sel_vrsta and "Vrsta" in df.columns:
+                    df = df[df["Vrsta"].isin(sel_vrsta)]
+                if sel_datum:
+                    if isinstance(sel_datum, list) and len(sel_datum) == 2:
+                        df = df[(df["Datum revizije"] >= pd.to_datetime(sel_datum[0])) &
+                                (df["Datum revizije"] <= pd.to_datetime(sel_datum[1]))]
+                    else:
+                        df = df[df["Datum revizije"] == pd.to_datetime(sel_datum)]
 
-            # --- Primena filtera ---
-            if broj_kola_input:
-                brojevi = [b.strip() for b in broj_kola_input.split(",") if b.strip()]
-                df = df[df["Broj kola"].isin(brojevi)]
+                if tip_filter != "Sva kola":
+                    df = df[df["TIP"] == tip_filter]
 
-            if sel_serija:
-                df = df[df["Serija"].isin(sel_serija)]
+                # Sortiranje i upis u session_state
+                df = df.sort_values("Datum_za_tip")
+                st.session_state["revizija_df"] = df
+                st.session_state["revizija_prikazano"] = True
 
-            if sel_radionica and "Radionica" in df.columns:
-                df = df[df["Radionica"].isin(sel_radionica)]
+                st.success(f"✅ Pronađeno {len(df)} kola.")
+                st.dataframe(df, use_container_width=True)
 
-            if sel_vrsta and "Vrsta" in df.columns:
-                df = df[df["Vrsta"].isin(sel_vrsta)]
-
-            if sel_datum:
-                if isinstance(sel_datum, list) and len(sel_datum) == 2:
-                    df = df[(df["Datum revizije"] >= pd.to_datetime(sel_datum[0])) &
-                            (df["Datum revizije"] <= pd.to_datetime(sel_datum[1]))]
-                else:
-                    df = df[df["Datum revizije"] == pd.to_datetime(sel_datum)]
-
-            # 🔹 Primena filtera po TIP-u
-            if tip_filter != "Sva kola":
-                df = df[df["TIP"] == tip_filter]
-
-            # Sortiranje
-            df = df.sort_values("Datum_za_tip")
-
-            # Upis u session_state
-            st.session_state["revizija_df"] = df
-            st.session_state["revizija_prikazano"] = True
-
-            st.success(f"✅ Pronađeno {len(df)} kola.")
-            st.dataframe(df, use_container_width=True)
-
-            # Dugme za preuzimanje
-            excel_file = "revizija_prikaz.xlsx"
-            df.to_excel(excel_file, index=False)
-            with open(excel_file, "rb") as f:
-                st.download_button("⬇️ Preuzmi Excel", f, file_name=excel_file)
+                # Dugme za preuzimanje
+                excel_file = "revizija_prikaz.xlsx"
+                df.to_excel(excel_file, index=False)
+                with open(excel_file, "rb") as f:
+                    st.download_button("⬇️ Preuzmi Excel", f, file_name=excel_file)
 
         except Exception as e:
             st.error(f"Greška pri učitavanju podataka: {e}")
 
-    # --- Filter dana do isteka ---
+    # --- Filter dana do isteka
     if st.session_state["revizija_prikazano"] and st.session_state["revizija_df"] is not None:
         df = st.session_state["revizija_df"]
         dana = st.number_input(
