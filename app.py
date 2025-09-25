@@ -367,7 +367,7 @@ if selected_tab == "📌 Poslednje stanje kola":
                 PARTITION BY s."Broj kola"
                 ORDER BY k.DatumVreme DESC
             ) = 1
-            LIMIT 1000
+            LIMIT 4200
             """
             # Lazy DuckDB pristup
             import duckdb
