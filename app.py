@@ -9,12 +9,7 @@ import polars as pl
 import json
 from datetime import date
 from huggingface_hub import hf_hub_download, Repository, HfApi
-import os
-import duckdb
-import pandas as pd
-import polars as pl
-import streamlit as st
-from huggingface_hub import hf_hub_download, HfApi
+
 
 # -------------------- CONFIG --------------------
 st.set_page_config(layout="wide")
@@ -50,7 +45,16 @@ DB_FILE = get_db_file()
 def get_duckdb_connection(db_file):
     return duckdb.connect(database=db_file, read_only=True)
 
-con = get_duckdb_connection(DB_FILE)
+con = get_duckdb_connection()
+
+# Definicija helper funkcije
+@st.cache_data
+def run_sql(sql: str) -> pd.DataFrame:
+    return con.execute(sql).fetchdf()
+
+# Sada je sigurno pozvati run_sql
+df = run_sql("SELECT * FROM kola LIMIT 5")
+st.dataframe(df)
 
 # -------------------- ADMIN LOGIN --------------------
 if "admin_logged_in" not in st.session_state:
