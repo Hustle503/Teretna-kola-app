@@ -355,21 +355,21 @@ if selected_tab == "📌 Poslednje stanje kola":
     if st.button("🔎 Prikaži poslednje stanje kola", key="btn_last_state"):
         try:
             # Upit za poslednje stanje kola
-            q_last_optimized = """
-            WITH kola_clean AS (
-                SELECT *,
-                       TRY_CAST(SUBSTRING("Broj kola" FROM 3) AS BIGINT) AS broj_kola_num
-                FROM kola
-            )
-            SELECT s."Broj kola" AS broj_stanje,
-                   k."Broj kola" AS broj_kola_raw,
-                   k.*
-            FROM stanje s
-            LEFT JOIN kola_clean k
-                   ON TRY_CAST(s."Broj kola" AS BIGINT) = k.broj_kola_num
-            QUALIFY ROW_NUMBER() OVER (
-                   PARTITION BY s."Broj kola"
-               ORDER BY k.DatumVreme DESC
+            q_last = """
+                SELECT s."Broj kola" AS broj_stanje,
+                       k."Broj kola" AS broj_kola_raw,
+                       k.*
+                FROM stanje s
+                LEFT JOIN (
+                    SELECT 
+                        TRY_CAST(SUBSTR("Broj kola", 3, LENGTH("Broj kola") - 3) AS BIGINT) AS broj_clean,
+                        *
+                    FROM kola
+                ) k
+                  ON TRY_CAST(s."Broj kola" AS BIGINT) = k.broj_clean
+                QUALIFY ROW_NUMBER() OVER (
+                    PARTITION BY s."Broj kola"
+                    ORDER BY k.DatumVreme DESC
             ) = 1
             LIMIT 4200
             """
