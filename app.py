@@ -45,11 +45,7 @@ def load_excel(file_path):
 df_stanice = load_excel(STANICE_FILE)
 df_stanje = load_excel(STANJE_FILE)
 
-st.write("Prvih 5 redova stanica:")
-st.dataframe(df_stanice.head())
 
-st.write("Prvih 5 redova Stanje SK:")
-st.dataframe(df_stanje.head())
 
 # ---------- Helper funkcije ----------
 @st.cache_data(show_spinner=False)
