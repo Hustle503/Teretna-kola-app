@@ -21,7 +21,14 @@ STATE_FILE = "loaded_files.json"
 HF_TOKEN = "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"
 HF_REPO = "Hustle503/baza"
 LOCAL_DB = "kola_sk.db"
-DB_FILE = "/tmp/kola_sk.db"
+DB_FILE = hf_hub_download(
+    repo_id=HF_REPO,
+    filename="kola_sk.db",
+    repo_type="dataset",
+    token=HF_TOKEN
+)
+
+st.write("DB_FILE path:", DB_FILE)   # opcionalno za debug
 
 os.makedirs(DEFAULT_FOLDER, exist_ok=True)
 
