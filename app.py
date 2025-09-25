@@ -55,10 +55,10 @@ except Exception:
     pass
 
 # Pretvaranje Broj kola u broj_clean
-con.execute("""
-UPDATE kola
-SET broj_clean = TRY_CAST(SUBSTRING("Broj kola" FROM 3) AS BIGINT)
-""")
+    con.execute("""
+    UPDATE kola
+    SET broj_clean = TRY_CAST(SUBSTRING("Broj kola" FROM 3) AS BIGINT)
+    """)
 # Definicija helper funkcije
 @st.cache_data
 def run_sql(sql: str) -> pd.DataFrame:
