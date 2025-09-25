@@ -14,8 +14,15 @@ st.set_page_config(layout="wide")
 st.title("🚂 Teretna kola SK")
 
 # HF token i repo
-HF_TOKEN = "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"
-HF_REPO = "Hustle503/baza"
+HF_TOKEN = st.secrets["HF_TOKEN"]
+HF_REPO = st.secrets["HF_REPO"]
+
+DB_FILE = hf_hub_download(
+    repo_id=HF_REPO,
+    filename="kola_sk.db",
+    repo_type="dataset",
+    token=HF_TOKEN
+)
 
 # Admin lozinka
 ADMIN_PASS = "tajna123"
