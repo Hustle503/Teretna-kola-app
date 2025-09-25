@@ -42,19 +42,19 @@ DB_FILE = get_db_file()
 
 # -------------------- DUCKDB --------------------
 @st.cache_resource
-def get_duckdb_connection(db_file):
+def get_duckdb_connection(db_file=DB_FILE):
+    # DuckDB read-only konekcija
     return duckdb.connect(database=db_file, read_only=True)
 
-con = get_duckdb_connection(DB_FILE)
+# Kreiraj konekciju
 con = get_duckdb_connection()
+
 # Definicija helper funkcije
 @st.cache_data
 def run_sql(sql: str) -> pd.DataFrame:
     return con.execute(sql).fetchdf()
 
-# Sada je sigurno pozvati run_sql
-df = run_sql("SELECT * FROM kola LIMIT 5")
-st.dataframe(df)
+
 
 # -------------------- ADMIN LOGIN --------------------
 if "admin_logged_in" not in st.session_state:
