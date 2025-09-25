@@ -350,27 +350,46 @@ def format_numeric(df):
     return df
 
 if selected_tab == "📌 Poslednje stanje kola":
-    st.subheader("📌 Poslednje stanje kola")  
+    st.subheader("📌 Poslednje stanje kola")
 
     if st.button("🔎 Prikaži poslednje stanje kola", key="btn_last_state"):
         try:
-            df_last = run_sql(q_last_optimized)
+            # Upit za poslednje stanje kola
+            q_last_optimized = """
+            SELECT s."Broj kola" AS broj_stanje,
+                   k."Broj kola" AS broj_kola_raw,
+                   k.*
+            FROM stanje s
+            LEFT JOIN kola k
+                   ON s."Broj kola" = k.broj_clean
+            QUALIFY ROW_NUMBER() OVER (
+                PARTITION BY s."Broj kola"
+                ORDER BY k.DatumVreme DESC
+            ) = 1
+            """
 
-            # Ukloni tehničke kolone
-            for col in ["broj_clean", "broj_clean_1"]:
-                if col in df_last.columns:
-                    df_last.drop(columns=[col], inplace=True)
+            # Lazy DuckDB pristup
+            import duckdb
+            lazy_con = duckdb.connect(database=DB_FILE, read_only=True).cursor()
+            df_last = lazy_con.execute(q_last_optimized).fetchdf()
 
-            # Dodaj nazive stanica
-            df_last = add_station_names(df_last)
+            # Progres bar simulacija (ako je veliki dataset)
+            with st.spinner("🔄 Priprema podataka..."):
+                # Ukloni tehničke kolone
+                for col in ["broj_clean", "broj_clean_1"]:
+                    if col in df_last.columns:
+                        df_last.drop(columns=[col], inplace=True)
 
-            # Formatiraj numeričke kolone
-            df_last = format_numeric(df_last)
+                # Dodaj nazive stanica
+                df_last = add_station_names(df_last)
+
+                # Formatiraj numeričke kolone
+                df_last = format_numeric(df_last)
 
             st.success(f"✅ Pronađeno {len(df_last)} poslednjih unosa za kola iz Excel tabele.")
             st.dataframe(df_last, use_container_width=True)
 
-            # Eksport Excel
+            # Download u Excel
             excel_buffer = io.BytesIO()
             with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
                 df_last.to_excel(writer, index=False, sheet_name="Poslednje stanje")
