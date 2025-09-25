@@ -204,7 +204,7 @@ def add_file_streamlit(uploaded_file, table_name: str = None):
                     df_new = df_new.with_columns(pl.lit(None).alias(col))
             df_new = df_new.select(existing_cols)
             con.register("df_new", df_new)
-            con.execute(f"INSERT INTO {TABLE_NAME} SELECT * FROM df_new")
+            con.execute(f"CREATE OR REPLACE TABLE {TABLE_XLSX} AS SELECT * FROM df_new")
             con.unregister("df_new")
             st.success(f"✅ TXT fajl '{uploaded_file.name}' dodat ({len(df_new)} redova).")
 
