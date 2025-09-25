@@ -163,7 +163,7 @@ def init_database():
     st.success("✅ Inicijalizacija završena – ubačeni TXT i Excel fajlovi.")
 
 # -------------------- Upload fajla kroz app --------------------
-def add_file_streamlit(uploaded_file):
+def add_file_streamlit(uploaded_file, table_name: str = None):
     if uploaded_file is None:
         st.warning("⚠️ Niste izabrali fajl.")
         return
@@ -172,25 +172,77 @@ def add_file_streamlit(uploaded_file):
     with open(tmp_path, "wb") as f:
         f.write(uploaded_file.getbuffer())
 
+    # ---------------- TXT fajl ----------------
     if uploaded_file.name.lower().endswith(".txt"):
         df_new = parse_txt(tmp_path)
-        con.register("df_new", df_new)
-        con.execute(f"INSERT INTO {TABLE_TXT} SELECT * FROM df_new")
-        con.unregister("df_new")
-        st.success(f"✅ TXT fajl '{uploaded_file.name}' dodat ({len(df_new)} redova)")
 
+        # Dodaj ID kolonu
+        try:
+            max_id = run_sql(f"SELECT MAX(id) AS max_id FROM {TABLE_NAME}").iloc[0, 0]
+            if max_id is None:
+                max_id = 0
+        except:
+            max_id = 0
+        df_new = df_new.with_columns(pl.arange(max_id + 1, max_id + 1 + df_new.height).alias("id"))
+
+        con = get_duckdb_connection()
+        try:
+            con.execute(f"SELECT 1 FROM {TABLE_NAME} LIMIT 1")
+            table_exists = True
+        except:
+            table_exists = False
+
+        if not table_exists:
+            con.register("df_new", df_new)
+            con.execute(f"CREATE TABLE {TABLE_NAME} AS SELECT * FROM df_new")
+            con.unregister("df_new")
+            st.success(f"✅ Kreirana nova tabela '{TABLE_NAME}' ({len(df_new)} redova).")
+        else:
+            existing_cols = [c[1] for c in con.execute(f"PRAGMA table_info({TABLE_NAME})").fetchall()]
+            for col in existing_cols:
+                if col not in df_new.columns:
+                    df_new = df_new.with_columns(pl.lit(None).alias(col))
+            df_new = df_new.select(existing_cols)
+            con.register("df_new", df_new)
+            con.execute(f"INSERT INTO {TABLE_NAME} SELECT * FROM df_new")
+            con.unregister("df_new")
+            st.success(f"✅ TXT fajl '{uploaded_file.name}' dodat ({len(df_new)} redova).")
+
+    # ---------------- Excel fajl ----------------
     elif uploaded_file.name.lower().endswith(".xlsx"):
-        df_new = parse_excel(tmp_path)
-        con.register("df_new", df_new)
-        con.execute(f"INSERT INTO {TABLE_XLSX} SELECT * FROM df_new")
-        con.unregister("df_new")
-        st.success(f"✅ Excel fajl '{uploaded_file.name}' dodat ({len(df_new)} redova)")
+        df_new = pd.read_excel(tmp_path)
+        if table_name is None:
+            table_name = uploaded_file.name.rsplit(".", 1)[0]
+
+        con = get_duckdb_connection()
+        try:
+            con.execute(f'SELECT 1 FROM "{table_name}" LIMIT 1')
+            table_exists = True
+        except:
+            table_exists = False
+
+        if not table_exists:
+            con.register("df_new", df_new)
+            con.execute(f'CREATE TABLE "{table_name}" AS SELECT * FROM df_new')
+            con.unregister("df_new")
+            st.success(f"✅ Kreirana nova tabela '{table_name}' ({len(df_new)} redova).")
+        else:
+            existing_cols = [c[1] for c in con.execute(f'PRAGMA table_info("{table_name}")').fetchall()]
+
+            # Poravnanje kolona
+            df_new = df_new[[c for c in df_new.columns if c in existing_cols]]
+            for col in existing_cols:
+                if col not in df_new.columns:
+                    df_new[col] = None
+            df_new = df_new[existing_cols]
+
+            con.register("df_new", df_new)
+            con.execute(f'INSERT INTO "{table_name}" SELECT * FROM df_new')
+            con.unregister("df_new")
+            st.success(f"✅ Excel fajl '{uploaded_file.name}' dodat u '{table_name}' ({len(df_new)} redova).")
 
     else:
-        st.error("❌ Podržani su samo TXT i XLSX fajlovi.")
-
-    st.info("ℹ️ Ako želiš da fajl ostane trajno, moraš ga push-ovati u repo.")
-
+        st.error("❌ Dozvoljeni su samo TXT i XLSX fajlovi.")
 # -------------------- UI --------------------
 st.title("🚂 Teretna kola SK")
 
