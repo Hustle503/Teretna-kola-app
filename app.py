@@ -10,16 +10,6 @@ import json
 from datetime import date
 from huggingface_hub import hf_hub_download, Repository, HfApi
 
-
-import os
-import glob
-import json
-import pandas as pd
-import polars as pl
-import duckdb
-import streamlit as st
-from huggingface_hub import Repository, HfApi, hf_hub_download
-
 # -------------------- KONFIG --------------------
 st.set_page_config(layout="wide", page_title="🚂 Teretna kola SK")
 ADMIN_PASS = "tajna123"
