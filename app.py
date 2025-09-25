@@ -18,7 +18,7 @@ DEFAULT_FOLDER = "/tmp/teretna_kola"  # Cloud folder
 TABLE_NAME = "kola"
 STATE_FILE = "loaded_files.json"
 
-HF_TOKEN = "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"
+HF_TOKEN = "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"
 HF_REPO = "Hustle503/baza"
 LOCAL_DB = "kola_sk.db"
 DB_FILE = hf_hub_download(
