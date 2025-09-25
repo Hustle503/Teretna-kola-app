@@ -6,3 +6,6 @@ openpyxl
 requests
 gdown
 pydrive2
+huggingface-hub
+streamlit-option-menu
+st-aggrid
