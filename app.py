@@ -10,13 +10,21 @@ import json
 from datetime import date
 from huggingface_hub import hf_hub_download
 
+
+# -------------------- KONFIG --------------------
 st.set_page_config(layout="wide", page_title="🚂 Teretna kola SK")
 
-# ---------- Preuzimanje velike baze sa Hugging Face ----------
+REPO_ID = "Hustle503/baza"
+TABLE_TXT = "kola"
+TABLE_XLSX = "xlsx_tabele"
+STATE_FILE = "loaded_files.json"
+
+# -------------------- HELPER FUNKCIJE --------------------
+
 @st.cache_data
 def get_db_file():
     db_path = hf_hub_download(
-        repo_id="Hustle503/baza",
+        repo_id=REPO_ID,
         filename="kola_sk.db",
         repo_type="dataset"
     )
@@ -24,35 +32,12 @@ def get_db_file():
 
 DB_FILE = get_db_file()
 
-# ---------- Konstante za male Excel fajlove ----------
-STATE_FILE = "loaded_files.json"
-TABLE_NAME = "kola"
-STANICE_FILE = "stanice1.xlsx"
-STANJE_FILE = "Stanje SK.xlsx"
-
-# ---------- DuckDB konekcija ----------
 @st.cache_resource
 def get_duckdb_connection():
     return duckdb.connect(DB_FILE)
 
 con = get_duckdb_connection()
 
-# ---------- Učitavanje lokalnih Excel fajlova ----------
-@st.cache_data
-def load_excel(file_path):
-    return pd.read_excel(file_path)
-
-df_stanice = load_excel(STANICE_FILE)
-df_stanje = load_excel(STANJE_FILE)
-
-
-
-# ---------- Helper funkcije ----------
-@st.cache_data(show_spinner=False)
-def run_sql(sql: str) -> pd.DataFrame:
-    """Izvrši SQL nad glavnom DuckDB bazom."""
-    con = get_duckdb_connection()
-    return con.execute(sql).fetchdf()
 
 def load_state():
     if os.path.exists(STATE_FILE):
@@ -64,7 +49,22 @@ def save_state(processed_files):
     with open(STATE_FILE, "w", encoding="utf-8") as f:
         json.dump(list(processed_files), f, indent=2)
 
-# ---------- Funkcija za parsiranje TXT fajla ----------
+# -------------------- Preuzimanje fajlova iz repo-a --------------------
+@st.cache_data
+def download_files_from_repo(extension=".txt"):
+    files = list_repo_files(REPO_ID, repo_type="dataset")
+    files = [f for f in files if f.lower().endswith(extension)]
+    local_paths = []
+    for f in files:
+        local_path = hf_hub_download(
+            repo_id=REPO_ID,
+            filename=f,
+            repo_type="dataset"
+        )
+        local_paths.append(local_path)
+    return local_paths
+
+# -------------------- Parsiranje TXT fajla --------------------
 def parse_txt(path) -> pl.DataFrame:
     rows = []
     with open(path, "r", encoding="utf-8", errors="ignore") as f:
@@ -99,327 +99,108 @@ def parse_txt(path) -> pl.DataFrame:
             })
 
     df = pl.DataFrame(rows)
-
-    # Ispravka vremena 2400 → 0000 i pomeranje datuma
-    df = df.with_columns([
-        pl.when(pl.col("Vreme") == "2400")
-          .then(pl.lit("0000"))
-          .otherwise(pl.col("Vreme"))
-          .alias("Vreme"),
-        pl.when(pl.col("Vreme") == "2400")
-          .then(
-              (pl.col("Datum").str.strptime(pl.Date, "%Y%m%d", strict=False) + pl.duration(days=1))
-              .dt.strftime("%Y%m%d")
-          )
-          .otherwise(pl.col("Datum"))
-          .alias("Datum"),
-    ])
-
-    # Kombinovana kolona DatumVreme
     df = df.with_columns([
         (pl.col("Datum") + " " + pl.col("Vreme"))
             .str.strptime(pl.Datetime, "%Y%m%d %H%M", strict=False)
-            .alias("DatumVreme"),
-        pl.col("Datum").str.strptime(pl.Date, "%Y%m%d", strict=False).is_not_null().alias("Datum_validan")
+            .alias("DatumVreme")
     ])
+    return df
 
-    # Brojevi u float
-    df = df.with_columns([
-        (pl.col("tara").str.slice(0, 2) + "." + pl.col("tara").str.slice(2)).cast(pl.Float64).alias("tara"),
-        (pl.col("NetoTone").str.slice(0, 2) + "." + pl.col("NetoTone").str.slice(2)).cast(pl.Float64).alias("NetoTone"),
-        (pl.col("dužina vagona").str.slice(0, 2) + "." + pl.col("dužina vagona").str.slice(2)).cast(pl.Float64).alias("dužina vagona"),
-    ])
+# -------------------- Parsiranje Excel fajla --------------------
+def parse_excel(path) -> pd.DataFrame:
+    df = pd.read_excel(path, dtype=str)
+    df["source_file"] = os.path.basename(path)
+
+    # Osiguraj da "Broj kola" bude numerički ako može
+    if "Broj kola" in df.columns:
+        df["Broj kola"] = pd.to_numeric(df["Broj kola"], errors="coerce").astype("Int64")
 
     return df
 
-# ---------- Inicijalizacija baze sa ID kolonom ----------
-def init_database(folder: str, TABLE_NAME: str = TABLE_NAME):
-    files = glob.glob(os.path.join(folder, "*.txt"))
-    if not files:
-        st.warning(f"⚠️ Nema txt fajlova u folderu: {folder}")
-        return
+# -------------------- Inicijalizacija baze --------------------
+def init_database():
+    # TXT fajlovi
+    txt_files = download_files_from_repo(".txt")
+    if txt_files:
+        all_dfs = [parse_txt(f) for f in txt_files]
+        df_txt = pl.concat(all_dfs).with_columns(pl.arange(0, sum(len(d) for d in all_dfs)).alias("id"))
+        con.register("df_txt", df_txt)
+        con.execute(f"DROP TABLE IF EXISTS {TABLE_TXT}")
+        con.execute(f"CREATE TABLE {TABLE_TXT} AS SELECT * FROM df_txt")
+        con.unregister("df_txt")
 
-    all_dfs = [parse_txt(f) for f in files]
-    df = pl.concat(all_dfs)
+        # uklanjanje duplikata po Broj kola + source_file
+        con.execute(f"""
+            DELETE FROM {TABLE_TXT}
+            WHERE id NOT IN (
+                SELECT MIN(id) FROM {TABLE_TXT}
+                GROUP BY "Broj kola", source_file
+            )
+        """)
 
-    # Dodajemo ID kolonu
-    df = df.with_columns(pl.arange(0, df.height).alias("id"))
+    # Excel fajlovi
+    xlsx_files = download_files_from_repo(".xlsx")
+    if xlsx_files:
+        all_dfs = [parse_excel(f) for f in xlsx_files]
+        df_xlsx = pd.concat(all_dfs, ignore_index=True)
+        df_xlsx["id"] = range(1, len(df_xlsx)+1)
 
-    con = get_duckdb_connection()
-    con.execute(f"DROP TABLE IF EXISTS {TABLE_NAME}")
-    con.register("df", df)
-    con.execute(f"CREATE TABLE {TABLE_NAME} AS SELECT * FROM df")
-    con.unregister("df")
+        con.register("df_xlsx", df_xlsx)
+        con.execute(f"DROP TABLE IF EXISTS {TABLE_XLSX}")
+        con.execute(f"CREATE TABLE {TABLE_XLSX} AS SELECT * FROM df_xlsx")
+        con.unregister("df_xlsx")
 
-    save_state(set(files))
-    st.success(f"✅ Inicijalno učitano {len(df)} redova iz {len(files)} fajlova")
+        # uklanjanje duplikata po Broj kola + source_file
+        if "Broj kola" in df_xlsx.columns:
+            con.execute(f"""
+                DELETE FROM {TABLE_XLSX}
+                WHERE id NOT IN (
+                    SELECT MIN(id) FROM {TABLE_XLSX}
+                    GROUP BY "Broj kola", source_file
+                )
+            """)
 
-# ---------- Update baze ----------
-def update_database(folder: str, TABLE_NAME: str = TABLE_NAME):
-    processed = load_state()
-    files = set(glob.glob(os.path.join(folder, "*.txt")))
-    new_files = files - processed
-    if not new_files:
-        st.info("ℹ️ Nema novih fajlova za unos.")
-        return
+    st.success("✅ Inicijalizacija završena – ubačeni TXT i Excel fajlovi.")
 
-    con = get_duckdb_connection()
-    for f in sorted(new_files):
-        df_new = parse_txt(f)
-
-        # Normalizacija kolona prema postojećoj tabeli
-        existing_cols = [c[1] for c in con.execute(f"PRAGMA table_info({TABLE_NAME})").fetchall()]
-        for col in existing_cols:
-            if col not in df_new.columns:
-                df_new = df_new.with_columns(pl.lit(None).alias(col))
-        df_new = df_new.select(existing_cols)
-
-        con.register("df_new", df_new)
-        con.execute(f"INSERT INTO {TABLE_NAME} SELECT * FROM df_new")
-        con.unregister("df_new")
-        processed.add(f)
-        st.write(f"➕ Ubačeno {len(df_new)} redova iz {os.path.basename(f)}")
-
-    save_state(processed)
-    st.success("✅ Update baze završen.")
-
-# ---------- Dodavanje pojedinačnog fajla ----------
-def add_txt_file_streamlit(uploaded_file, TABLE_NAME: str = TABLE_NAME):
+# -------------------- Upload fajla kroz app --------------------
+def add_file_streamlit(uploaded_file):
     if uploaded_file is None:
         st.warning("⚠️ Niste izabrali fajl.")
         return
 
-    tmp_path = os.path.join(DEFAULT_FOLDER, uploaded_file.name)
+    tmp_path = os.path.join("/tmp", uploaded_file.name)
     with open(tmp_path, "wb") as f:
         f.write(uploaded_file.getbuffer())
 
-    df_new = parse_txt(tmp_path)
-    con = get_duckdb_connection()
-
-    # Dobavi poslednji ID iz postojeće tabele
-    try:
-        max_id = run_sql(f"SELECT MAX(id) AS max_id FROM {TABLE_NAME}").iloc[0, 0]
-        if max_id is None:
-            max_id = 0
-    except:
-        max_id = 0
-
-    # Dodaj ID kolonu za novi fajl
-    df_new = df_new.with_columns(pl.arange(max_id + 1, max_id + 1 + df_new.height).alias("id"))
-
-    tables = [t[0] for t in con.execute("SHOW TABLES").fetchall()]
-    if TABLE_NAME in tables:
-        existing_cols = [c[1] for c in con.execute(f"PRAGMA table_info({TABLE_NAME})").fetchall()]
-        for col in existing_cols:
-            if col not in df_new.columns:
-                df_new = df_new.with_columns(pl.lit(None).alias(col))
-        df_new = df_new.select(existing_cols)
+    if uploaded_file.name.lower().endswith(".txt"):
+        df_new = parse_txt(tmp_path)
         con.register("df_new", df_new)
-        con.execute(f"INSERT INTO {TABLE_NAME} SELECT * FROM df_new")
+        con.execute(f"INSERT INTO {TABLE_TXT} SELECT * FROM df_new")
         con.unregister("df_new")
+        st.success(f"✅ TXT fajl '{uploaded_file.name}' dodat ({len(df_new)} redova)")
+
+    elif uploaded_file.name.lower().endswith(".xlsx"):
+        df_new = parse_excel(tmp_path)
+        con.register("df_new", df_new)
+        con.execute(f"INSERT INTO {TABLE_XLSX} SELECT * FROM df_new")
+        con.unregister("df_new")
+        st.success(f"✅ Excel fajl '{uploaded_file.name}' dodat ({len(df_new)} redova)")
+
     else:
-        con.register("df_new", df_new)
-        con.execute(f"CREATE TABLE {TABLE_NAME} AS SELECT * FROM df_new")
-        con.unregister("df_new")
+        st.error("❌ Podržani su samo TXT i XLSX fajlovi.")
 
-    st.success(f"✅ Fajl '{uploaded_file.name}' dodat u bazu ({len(df_new)} redova)")
-# ---------- Streamlit UI ----------
-import streamlit as st
-import pandas as pd
+    st.info("ℹ️ Ako želiš da fajl ostane trajno, moraš ga push-ovati u repo.")
 
-# -------------------- KONFIG --------------------
-st.set_page_config(layout="wide")
+# -------------------- UI --------------------
 st.title("🚂 Teretna kola SK")
 
-ADMIN_PASS = "tajna123"
-DEFAULT_FOLDER = r"C:\Teretna kola"
-TABLE_NAME = "kola"
+if st.sidebar.button("🚀 Inicijalizuj bazu iz repo-a"):
+    init_database()
 
-if "admin_logged_in" not in st.session_state:
-    st.session_state.admin_logged_in = False
+uploaded_file = st.file_uploader("📥 Dodaj TXT ili Excel fajl", type=["txt", "xlsx"])
+if st.button("Dodaj fajl u bazu"):
+    add_file_streamlit(uploaded_file)
 
-# -------------------- SIDEBAR LOGIN --------------------
-st.sidebar.title("⚙️ Podešavanja")
-
-if not st.session_state.admin_logged_in:
-    password = st.sidebar.text_input("🔑 Unesi lozinku:", type="password")
-    if st.sidebar.button("🔓 Otključaj"):
-        if password == ADMIN_PASS:
-            st.session_state.admin_logged_in = True
-            st.sidebar.success("✅ Uspešno ste se prijavili!")
-        else:
-            st.sidebar.error("❌ Pogrešna lozinka.")
-    st.sidebar.warning("🔒 Podešavanja su zaključana.")
-else:
-    if st.sidebar.button("🚪 Odjavi se"):
-        st.session_state.admin_logged_in = False
-        st.sidebar.warning("🔒 Odjavljeni ste.")
-
-# -------------------- AKO JE ADMIN ULOGOVAN --------------------
-if st.session_state.admin_logged_in:
-    admin_tabs = st.tabs([
-        "📂 Inicijalizacija / Update baze",
-        "🔍 Duplikati",
-        "📄 Upload Excel",
-        "📊 Pregled učitanih fajlova"
-    ])
-
-    # ================= TAB 1 =================
-    with admin_tabs[0]:
-        st.subheader("📂 Inicijalizacija / Update baze")
-        folder_path = st.text_input("Folder sa TXT fajlovima", value=DEFAULT_FOLDER)
-
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("🚀 Inicijalizuj bazu"):
-                init_database(folder_path)
-                st.success("✅ Inicijalizacija završena")
-        with col2:
-            if st.button("🔄 Update baze iz foldera"):
-                update_database(folder_path)
-                st.success("✅ Update završen")
-
-        st.divider()
-        st.subheader("➕ Dodaj pojedinačni TXT fajl")
-        uploaded_file = st.file_uploader("Izaberite TXT fajl", type=["txt"])
-        if st.button("📥 Dodaj fajl"):
-            if uploaded_file is not None:
-                add_txt_file_streamlit(uploaded_file)
-            else:
-                st.warning("⚠️ Niste izabrali fajl.")
-
-    # ================= TAB 2 =================
-    with admin_tabs[1]:
-        st.subheader("🔍 Duplikati u tabeli kola")
-
-        filter_godina = st.text_input("Godina (YYYY)", max_chars=4, key="dupl_godina")
-        filter_mesec = st.text_input("Mesec (MM)", max_chars=2, key="dupl_mesec", help="Opcionalno")
-
-        def get_where_clause(godina, mesec=None):
-            clause = f"WHERE SUBSTR(CAST(DatumVreme AS VARCHAR),1,4)='{godina}'"
-            if mesec:
-                clause += f" AND SUBSTR(CAST(DatumVreme AS VARCHAR),5,2)='{mesec}'"
-            return clause
-
-        def get_dupes_sql(godina, mesec=None):
-            where_clause = get_where_clause(godina, mesec)
-            sql = f"""
-                WITH dupl AS (
-                    SELECT *,
-                           ROW_NUMBER() OVER (
-                               PARTITION BY "Režim","Vlasnik","Serija","Inv br","KB","Tip kola","Voz br",
-                                            "Stanica","Status","Roba","Rid","UN broj","Reon",
-                                            "tara","NetoTone","dužina vagona","broj osovina",
-                                            "Otp. država","Otp st","Uputna država","Up st","Broj kola",
-                                            "Redni broj kola"
-                               ORDER BY DatumVreme
-                           ) AS rn
-                    FROM kola
-                    {where_clause}
-                )
-                SELECT *
-                FROM dupl
-                WHERE rn > 1
-                ORDER BY "Režim","Vlasnik","Serija","Inv br",DatumVreme
-            """
-            return sql
-
-        if st.button("🔍 Proveri duplikate", key="btn_proveri_dupl"):
-            if not filter_godina:
-                st.warning("⚠️ Unesite godinu.")
-            else:
-                dupes = run_sql(get_dupes_sql(filter_godina, filter_mesec))
-                if dupes.empty:
-                    st.success("✅ Duplikata nema")
-                else:
-                    st.warning(f"⚠️ Pronađeno {len(dupes)} duplikata!")
-                    st.dataframe(dupes, use_container_width=True)
-                    st.session_state.dupes_cols = dupes
-                    st.info(f"⚠️ Obrisalo bi se {len(dupes)} redova (ostaje prvi unos).")
-
-        if "dupes_cols" in st.session_state and not st.session_state.dupes_cols.empty:
-            if st.button("🗑️ Potvrdi brisanje", key="btn_potvrdi_brisi"):
-                cols = [
-                    "Režim","Vlasnik","Serija","Inv br","KB","Tip kola","Voz br",
-                    "Stanica","Status","Roba","Rid","UN broj","Reon",
-                    "tara","NetoTone","dužina vagona","broj osovina",
-                    "Otp. država","Otp st","Uputna država","Up st","Broj kola",
-                    "Redni broj kola"
-                ]
-                cols_str = ', '.join(f'"{c}"' for c in cols)
-
-                delete_sql = f"""
-                    DELETE FROM kola
-                    WHERE ({cols_str}) IN (
-                        SELECT {cols_str}
-                        FROM ({get_dupes_sql(filter_godina, filter_mesec)}) AS d
-                    )
-                """
-                run_sql(delete_sql)
-                st.success(f"✅ Obrisano {len(st.session_state.dupes_cols)} duplikata")
-                st.session_state.dupes_cols = pd.DataFrame()
-
-    # ================= TAB 3 =================
-    with admin_tabs[2]:
-        st.subheader("📄 Upload Excel tabele")
-        uploaded_excel = st.file_uploader("Izaberi Excel fajl", type=["xlsx"], key="excel_upload")
-        if st.button("⬆️ Upload / Update Excel tabele"):
-            if uploaded_excel is not None:
-                try:
-                    df_excel = pd.read_excel(uploaded_excel)
-                    con = get_duckdb_connection()
-                    ime_tabele = uploaded_excel.name.rsplit(".", 1)[0]
-
-                    tables = [t[0] for t in con.execute("SHOW TABLES").fetchall()]
-                    if ime_tabele in tables:
-                        con.execute(f'DROP TABLE IF EXISTS "{ime_tabele}"')
-                        st.info(f"ℹ️ Postojeća tabela '{ime_tabele}' obrisana – kreiramo novu.")
-
-                    con.register("df_excel", df_excel)
-                    con.execute(f'CREATE TABLE "{ime_tabele}" AS SELECT * FROM df_excel')
-                    con.unregister("df_excel")
-                    st.success(f"✅ Kreirana nova tabela '{ime_tabele}' ({len(df_excel)} redova).")
-                except Exception as e:
-                    st.error(f"❌ Greška pri učitavanju Excel-a: {e}")
-            else:
-                st.warning("⚠️ Niste izabrali Excel fajl.")
-
-    # ================= TAB 4 =================
-    with admin_tabs[3]:
-        st.subheader("📊 Učitanih redova po fajlu (top 20)")
-        try:
-            df_by_file = run_sql(
-                f'''
-                SELECT source_file, COUNT(*) AS broj
-                FROM "{TABLE_NAME}"
-                GROUP BY source_file
-                ORDER BY broj DESC
-                LIMIT 20
-                '''
-            )
-            st.dataframe(df_by_file, use_container_width=True)
-        except Exception as e:
-            st.warning(f"Ne mogu da pročitam bazu: {e}")
-
-
-# --- Broj redova i učitanih fajlova ---
-
-st.sidebar.title("🚂 Teretna kola SK — izveštaji")
-st.set_page_config(layout="wide")
-
-# --- Custom CSS ---
-st.markdown(
-    """
-    <style>
-    div[data-testid="stSidebar"] div[role="radiogroup"] > label {
-        font-size: 36px;
-        padding-top: 16px;
-        padding-bottom: 16px;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
 
 tab_buttons = [
     "📊 Pregled",
