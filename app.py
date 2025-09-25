@@ -8,37 +8,54 @@ import io
 import polars as pl
 import json
 from datetime import date
-from huggingface_hub import hf_hub_download
+from huggingface_hub import hf_hub_download, Repository, HfApi
 
 
 # -------------------- KONFIG --------------------
 st.set_page_config(layout="wide", page_title="🚂 Teretna kola SK")
-
-REPO_ID = "Hustle503/baza"
-TABLE_TXT = "kola"
-TABLE_XLSX = "xlsx_tabele"
+ADMIN_PASS = "tajna123"
+DEFAULT_FOLDER = r"C:\Teretna kola"
+TABLE_NAME = "kola"
 STATE_FILE = "loaded_files.json"
 
-# -------------------- HELPER FUNKCIJE --------------------
+HF_TOKEN = "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"
+HF_REPO = "Hustle503/baza"
+
+# -------------------- HF HELPERS --------------------
+def push_file_to_hf(local_path, commit_message="update"):
+    """Push fajla na Hugging Face repo koristeći token"""
+    repo_dir = "/tmp/hf_repo"
+    os.makedirs(repo_dir, exist_ok=True)
+    repo = Repository(local_dir=repo_dir, clone_from=HF_REPO, use_auth_token=HF_TOKEN)
+    target_path = os.path.join(repo_dir, os.path.basename(local_path))
+    with open(local_path, "wb") as f:
+        f.write(open(local_path, "rb").read())
+    repo.push_to_hub(commit_message=commit_message)
 
 @st.cache_data
 def get_db_file():
-    db_path = hf_hub_download(
-        repo_id=REPO_ID,
-        filename="kola_sk.db",
-        repo_type="dataset"
-    )
-    return db_path
+    return hf_hub_download(repo_id=HF_REPO, filename="kola_sk.db", repo_type="dataset", token=HF_TOKEN)
 
 DB_FILE = get_db_file()
 
+# -------------------- DuckDB --------------------
 @st.cache_resource
 def get_duckdb_connection():
     return duckdb.connect(DB_FILE)
 
 con = get_duckdb_connection()
 
+# -------------------- Excel učitavanje --------------------
+@st.cache_data
+def load_excel(file_path):
+    return pd.read_excel(file_path)
 
+STANICE_FILE = "stanice1.xlsx"
+STANJE_FILE = "Stanje SK.xlsx"
+df_stanice = load_excel(STANICE_FILE)
+df_stanje = load_excel(STANJE_FILE)
+
+# -------------------- State --------------------
 def load_state():
     if os.path.exists(STATE_FILE):
         with open(STATE_FILE, "r", encoding="utf-8") as f:
@@ -49,22 +66,12 @@ def save_state(processed_files):
     with open(STATE_FILE, "w", encoding="utf-8") as f:
         json.dump(list(processed_files), f, indent=2)
 
-# -------------------- Preuzimanje fajlova iz repo-a --------------------
-@st.cache_data
-def download_files_from_repo(extension=".txt"):
-    files = list_repo_files(REPO_ID, repo_type="dataset")
-    files = [f for f in files if f.lower().endswith(extension)]
-    local_paths = []
-    for f in files:
-        local_path = hf_hub_download(
-            repo_id=REPO_ID,
-            filename=f,
-            repo_type="dataset"
-        )
-        local_paths.append(local_path)
-    return local_paths
+# -------------------- SQL helper --------------------
+@st.cache_data(show_spinner=False)
+def run_sql(sql: str) -> pd.DataFrame:
+    return con.execute(sql).fetchdf()
 
-# -------------------- Parsiranje TXT fajla --------------------
+# -------------------- Parsiranje TXT fajlova --------------------
 def parse_txt(path) -> pl.DataFrame:
     rows = []
     with open(path, "r", encoding="utf-8", errors="ignore") as f:
@@ -97,162 +104,100 @@ def parse_txt(path) -> pl.DataFrame:
                 "Redni broj kola": line[57:59].strip(),
                 "source_file": os.path.basename(path),
             })
-
     df = pl.DataFrame(rows)
     df = df.with_columns([
-        (pl.col("Datum") + " " + pl.col("Vreme"))
-            .str.strptime(pl.Datetime, "%Y%m%d %H%M", strict=False)
-            .alias("DatumVreme")
+        pl.when(pl.col("Vreme")=="2400").then(pl.lit("0000")).otherwise(pl.col("Vreme")).alias("Vreme"),
+        pl.when(pl.col("Vreme")=="2400").then(
+            (pl.col("Datum").str.strptime(pl.Date,"%Y%m%d",strict=False)+pl.duration(days=1))
+            .dt.strftime("%Y%m%d")
+        ).otherwise(pl.col("Datum")).alias("Datum"),
+        (pl.col("Datum")+" "+pl.col("Vreme")).str.strptime(pl.Datetime,"%Y%m%d %H%M",strict=False).alias("DatumVreme"),
+        pl.col("Datum").str.strptime(pl.Date,"%Y%m%d",strict=False).is_not_null().alias("Datum_validan"),
+        (pl.col("tara").str.slice(0,2)+"."+pl.col("tara").str.slice(2)).cast(pl.Float64).alias("tara"),
+        (pl.col("NetoTone").str.slice(0,2)+"."+pl.col("NetoTone").str.slice(2)).cast(pl.Float64).alias("NetoTone"),
+        (pl.col("dužina vagona").str.slice(0,2)+"."+pl.col("dužina vagona").str.slice(2)).cast(pl.Float64).alias("dužina vagona"),
     ])
     return df
 
-# -------------------- Parsiranje Excel fajla --------------------
-def parse_excel(path) -> pd.DataFrame:
-    df = pd.read_excel(path, dtype=str)
-    df["source_file"] = os.path.basename(path)
-
-    # Osiguraj da "Broj kola" bude numerički ako može
-    if "Broj kola" in df.columns:
-        df["Broj kola"] = pd.to_numeric(df["Broj kola"], errors="coerce").astype("Int64")
-
-    return df
-
 # -------------------- Inicijalizacija baze --------------------
-def init_database():
-    # TXT fajlovi
-    txt_files = download_files_from_repo(".txt")
-    if txt_files:
-        all_dfs = [parse_txt(f) for f in txt_files]
-        df_txt = pl.concat(all_dfs).with_columns(pl.arange(0, sum(len(d) for d in all_dfs)).alias("id"))
-        con.register("df_txt", df_txt)
-        con.execute(f"DROP TABLE IF EXISTS {TABLE_TXT}")
-        con.execute(f"CREATE TABLE {TABLE_TXT} AS SELECT * FROM df_txt")
-        con.unregister("df_txt")
+def init_database(folder: str, TABLE_NAME: str = TABLE_NAME):
+    files = glob.glob(os.path.join(folder,"*.txt"))
+    if not files:
+        st.warning(f"⚠️ Nema txt fajlova u folderu: {folder}")
+        return
+    all_dfs = [parse_txt(f) for f in files]
+    df = pl.concat(all_dfs)
+    df = df.with_columns(pl.arange(0, df.height).alias("id"))
+    con.execute(f"DROP TABLE IF EXISTS {TABLE_NAME}")
+    con.register("df", df)
+    con.execute(f"CREATE TABLE {TABLE_NAME} AS SELECT * FROM df")
+    con.unregister("df")
+    save_state(set(files))
+    # Push fajlove na HF
+    for f in files:
+        push_file_to_hf(f, commit_message=f"Init: {os.path.basename(f)}")
+    st.success(f"✅ Inicijalno učitano {len(df)} redova iz {len(files)} fajlova i poslato na Hugging Face")
 
-        # uklanjanje duplikata po Broj kola + source_file
-        con.execute(f"""
-            DELETE FROM {TABLE_TXT}
-            WHERE id NOT IN (
-                SELECT MIN(id) FROM {TABLE_TXT}
-                GROUP BY "Broj kola", source_file
-            )
-        """)
+# -------------------- Update baze --------------------
+def update_database(folder: str, TABLE_NAME: str = TABLE_NAME):
+    processed = load_state()
+    files = set(glob.glob(os.path.join(folder,"*.txt")))
+    new_files = files - processed
+    if not new_files:
+        st.info("ℹ️ Nema novih fajlova za unos.")
+        return
+    for f in sorted(new_files):
+        df_new = parse_txt(f)
+        existing_cols = [c[1] for c in con.execute(f"PRAGMA table_info({TABLE_NAME})").fetchall()]
+        for col in existing_cols:
+            if col not in df_new.columns:
+                df_new = df_new.with_columns(pl.lit(None).alias(col))
+        df_new = df_new.select(existing_cols)
+        con.register("df_new", df_new)
+        con.execute(f"INSERT INTO {TABLE_NAME} SELECT * FROM df_new")
+        con.unregister("df_new")
+        processed.add(f)
+        st.write(f"➕ Ubačeno {len(df_new)} redova iz {os.path.basename(f)}")
+        push_file_to_hf(f, commit_message=f"Update: {os.path.basename(f)}")
+    save_state(processed)
+    st.success("✅ Update baze završen i fajlovi poslati na Hugging Face")
 
-    # Excel fajlovi
-    xlsx_files = download_files_from_repo(".xlsx")
-    if xlsx_files:
-        all_dfs = [parse_excel(f) for f in xlsx_files]
-        df_xlsx = pd.concat(all_dfs, ignore_index=True)
-        df_xlsx["id"] = range(1, len(df_xlsx)+1)
-
-        con.register("df_xlsx", df_xlsx)
-        con.execute(f"DROP TABLE IF EXISTS {TABLE_XLSX}")
-        con.execute(f"CREATE TABLE {TABLE_XLSX} AS SELECT * FROM df_xlsx")
-        con.unregister("df_xlsx")
-
-        # uklanjanje duplikata po Broj kola + source_file
-        if "Broj kola" in df_xlsx.columns:
-            con.execute(f"""
-                DELETE FROM {TABLE_XLSX}
-                WHERE id NOT IN (
-                    SELECT MIN(id) FROM {TABLE_XLSX}
-                    GROUP BY "Broj kola", source_file
-                )
-            """)
-
-    st.success("✅ Inicijalizacija završena – ubačeni TXT i Excel fajlovi.")
-
-# -------------------- Upload fajla kroz app --------------------
-def add_file_streamlit(uploaded_file, table_name: str = None):
+# -------------------- Dodavanje pojedinačnog fajla --------------------
+def add_file_streamlit(uploaded_file, TABLE_NAME=TABLE_NAME):
     if uploaded_file is None:
         st.warning("⚠️ Niste izabrali fajl.")
         return
-
-    tmp_path = os.path.join("/tmp", uploaded_file.name)
-    with open(tmp_path, "wb") as f:
+    tmp_path = os.path.join(DEFAULT_FOLDER, uploaded_file.name)
+    with open(tmp_path,"wb") as f:
         f.write(uploaded_file.getbuffer())
-
-    # ---------------- TXT fajl ----------------
+    # TXT ili Excel
     if uploaded_file.name.lower().endswith(".txt"):
         df_new = parse_txt(tmp_path)
-
-        # Dodaj ID kolonu
-        try:
-            max_id = run_sql(f"SELECT MAX(id) AS max_id FROM {TABLE_NAME}").iloc[0, 0]
-            if max_id is None:
-                max_id = 0
-        except:
-            max_id = 0
-        df_new = df_new.with_columns(pl.arange(max_id + 1, max_id + 1 + df_new.height).alias("id"))
-
-        con = get_duckdb_connection()
-        try:
-            con.execute(f"SELECT 1 FROM {TABLE_NAME} LIMIT 1")
-            table_exists = True
-        except:
-            table_exists = False
-
-        if not table_exists:
-            con.register("df_new", df_new)
-            con.execute(f"CREATE TABLE {TABLE_NAME} AS SELECT * FROM df_new")
-            con.unregister("df_new")
-            st.success(f"✅ Kreirana nova tabela '{TABLE_NAME}' ({len(df_new)} redova).")
-        else:
-            existing_cols = [c[1] for c in con.execute(f"PRAGMA table_info({TABLE_NAME})").fetchall()]
-            for col in existing_cols:
-                if col not in df_new.columns:
-                    df_new = df_new.with_columns(pl.lit(None).alias(col))
-            df_new = df_new.select(existing_cols)
-            con.register("df_new", df_new)
-            con.execute(f"CREATE OR REPLACE TABLE {TABLE_XLSX} AS SELECT * FROM df_new")
-            con.unregister("df_new")
-            st.success(f"✅ TXT fajl '{uploaded_file.name}' dodat ({len(df_new)} redova).")
-
-    # ---------------- Excel fajl ----------------
+        max_id = run_sql(f"SELECT MAX(id) AS max_id FROM {TABLE_NAME}").iloc[0,0]
+        max_id = 0 if max_id is None else max_id
+        df_new = df_new.with_columns(pl.arange(max_id+1, max_id+1+df_new.height).alias("id"))
+        existing_cols = [c[1] for c in con.execute(f"PRAGMA table_info({TABLE_NAME})").fetchall()]
+        for col in existing_cols:
+            if col not in df_new.columns:
+                df_new = df_new.with_columns(pl.lit(None).alias(col))
+        df_new = df_new.select(existing_cols)
+        con.register("df_new", df_new)
+        con.execute(f"INSERT INTO {TABLE_NAME} SELECT * FROM df_new")
+        con.unregister("df_new")
     elif uploaded_file.name.lower().endswith(".xlsx"):
-        df_new = pd.read_excel(tmp_path)
-        if table_name is None:
-            table_name = uploaded_file.name.rsplit(".", 1)[0]
+        df_excel = pd.read_excel(tmp_path)
+        TABLE_XLSX = uploaded_file.name.rsplit(".", 1)[0]  # ime tabele iz fajla
+        tables = [t[0] for t in con.execute("SHOW TABLES").fetchall()]
+        if TABLE_XLSX in tables:
+            con.execute(f'DROP TABLE IF EXISTS "{TABLE_XLSX}"')
+        con.register("df_excel", df_excel)
+        con.execute(f'CREATE TABLE "{TABLE_XLSX}" AS SELECT * FROM df_excel')
+        con.unregister("df_excel")
+        st.success(f"✅ Excel fajl '{uploaded_file.name}' dodat u '{TABLE_XLSX}' ({len(df_excel)} redova)")
 
-        con = get_duckdb_connection()
-        try:
-            con.execute(f'SELECT 1 FROM "{table_name}" LIMIT 1')
-            table_exists = True
-        except:
-            table_exists = False
-
-        if not table_exists:
-            con.register("df_new", df_new)
-            con.execute(f'CREATE TABLE "{table_name}" AS SELECT * FROM df_new')
-            con.unregister("df_new")
-            st.success(f"✅ Kreirana nova tabela '{table_name}' ({len(df_new)} redova).")
-        else:
-            existing_cols = [c[1] for c in con.execute(f'PRAGMA table_info("{table_name}")').fetchall()]
-
-            # Poravnanje kolona
-            df_new = df_new[[c for c in df_new.columns if c in existing_cols]]
-            for col in existing_cols:
-                if col not in df_new.columns:
-                    df_new[col] = None
-            df_new = df_new[existing_cols]
-
-            con.register("df_new", df_new)
-            con.execute(f'INSERT INTO "{table_name}" SELECT * FROM df_new')
-            con.unregister("df_new")
-            st.success(f"✅ Excel fajl '{uploaded_file.name}' dodat u '{table_name}' ({len(df_new)} redova).")
-
-    else:
-        st.error("❌ Dozvoljeni su samo TXT i XLSX fajlovi.")
-# -------------------- UI --------------------
-st.title("🚂 Teretna kola SK")
-
-if st.sidebar.button("🚀 Inicijalizuj bazu iz repo-a"):
-    init_database()
-
-uploaded_file = st.file_uploader("📥 Dodaj TXT ili Excel fajl", type=["txt", "xlsx"])
-if st.button("Dodaj fajl u bazu"):
-    add_file_streamlit(uploaded_file)
-
+    # Push fajl na Hugging Face
+    push_file_to_hf(tmp_path, commit_message=f"Upload: {uploaded_file.name}")
+    st.info(f"ℹ️ Fajl '{uploaded_file.name}' poslat na Hugging Face") 
 
 tab_buttons = [
     "📊 Pregled",
