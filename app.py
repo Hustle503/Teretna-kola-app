@@ -286,127 +286,98 @@ if selected_tab == "📊 Pregled":
         st.error(f"Greška pri čitanju baze: {e}")
 
 
-# 📌 Poslednje stanje kola
+import pandas as pd
+import polars as pl
+import streamlit as st
+import io
 
-
-# Učitavanje šifarnika stanica
-stanice_df = pd.read_excel("stanice.xlsx")  # kolone: sifra, naziv
+# ---------- Funkcije za stanice ----------
+stanice_df = pd.read_excel("stanice.xlsx")
 stanice_df["sifra"] = stanice_df["sifra"].astype(str).str.strip().str.lstrip("0")
 stanice_map = dict(zip(stanice_df["sifra"], stanice_df["naziv"]))
 
-
 def add_station_names(df):
-    # Stanica → Naziv st.
     if "Stanica" in df.columns:
         df["Stanica"] = df["Stanica"].astype(str).str.strip()
-        df.insert(
-            df.columns.get_loc("Stanica") + 1,
-            "Naziv st.",
-            df["Stanica"].map(stanice_map)
-        )
-    
-
-    # Otp st → Naziv otp st (ako je Otp. država == "72")
+        df.insert(df.columns.get_loc("Stanica")+1, "Naziv st.", df["Stanica"].map(stanice_map))
     if "Otp st" in df.columns and "Otp. država" in df.columns:
         df["Otp st"] = df["Otp st"].astype(str).str.strip().str.lstrip("0")
-        df["Otp. država"] = (
-            df["Otp. država"].astype(str).str.strip().str.replace(".0", "").str.lstrip("0")
-        )
-        df.insert(
-            df.columns.get_loc("Otp st") + 1,
-            "Naziv otp st.",
-            df.apply(
-                lambda row: stanice_map.get(str(row["Otp st"]).strip())
-                if row["Otp. država"] == "72" else None,
-                axis=1
-            )
-        )
-
-    # Up st → Naziv up st (ako je Uputna država == "72")
+        df["Otp. država"] = df["Otp. država"].astype(str).str.strip().str.replace(".0","").str.lstrip("0")
+        df.insert(df.columns.get_loc("Otp st")+1, "Naziv otp st.", 
+                  df.apply(lambda row: stanice_map.get(str(row["Otp st"])) if row["Otp. država"]=="72" else None, axis=1))
     if "Up st" in df.columns and "Uputna država" in df.columns:
-        df["Up st"]  = df["Up st"].astype(str).str.strip().str.lstrip("0")
-        df["Uputna država"] = (
-            df["Uputna država"].astype(str).str.strip().str.replace(".0", "").str.lstrip("0")
-        )
-        df.insert(
-            df.columns.get_loc("Up st") + 1,
-            "Naziv up st",
-            df.apply(
-                lambda row: stanice_map.get(str(row["Up st"]).strip())
-                if row["Uputna država"] == "72" else None,
-                axis=1
-            )
-        )
+        df["Up st"] = df["Up st"].astype(str).str.strip().str.lstrip("0")
+        df["Uputna država"] = df["Uputna država"].astype(str).str.strip().str.replace(".0","").str.lstrip("0")
+        df.insert(df.columns.get_loc("Up st")+1, "Naziv up st",
+                  df.apply(lambda row: stanice_map.get(str(row["Up st"])) if row["Uputna država"]=="72" else None, axis=1))
     return df
 
 def format_numeric(df):
-    for col in ["tara", "NetoTone", "dužina vagona"]:
+    for col in ["tara","NetoTone","dužina vagona"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
-            df[col] = df[col].apply(lambda x: x / 10 if pd.notnull(x) and x > 100 else x)
-            df[col] = df[col].apply(
-                lambda x: f"{x:.1f}".replace(".", ",") if pd.notnull(x) else None
-            )
+            df[col] = df[col].apply(lambda x: x/10 if pd.notnull(x) and x>100 else x)
+            df[col] = df[col].apply(lambda x: f"{x:.1f}".replace(".",",") if pd.notnull(x) else None)
     return df
 
+# ---------- Funkcija za batch processing ----------
+def get_last_state(con, batch_size=100):
+    # Učitavamo kola i dodajemo broj_clean
+    df_kola = pd.DataFrame(con.execute("""
+        SELECT *, TRY_CAST(SUBSTRING("Broj kola" FROM 3) AS BIGINT) AS broj_clean
+        FROM kola
+    """).fetchall(), columns=[desc[0] for desc in con.execute("PRAGMA table_info(kola)").fetchall()])
+    
+    df_stanje = pd.DataFrame(con.execute("SELECT * FROM stanje").fetchall(), 
+                             columns=[desc[0] for desc in con.execute("PRAGMA table_info(stanje)").fetchall()])
+    
+    df_result = []
+    total = len(df_stanje)
+    
+    progress = st.progress(0)
+    
+    for i in range(0, total, batch_size):
+        batch = df_stanje.iloc[i:i+batch_size].copy()
+        # LEFT JOIN po broj_clean
+        batch_merged = batch.merge(df_kola, left_on="Broj kola", right_on="broj_clean", how="left")
+        # Uzmi poslednji po DatumVreme
+        batch_merged = batch_merged.sort_values("DatumVreme", ascending=False).drop_duplicates(subset=["Broj kola"])
+        df_result.append(batch_merged)
+        progress.progress(min((i+batch_size)/total,1.0))
+    
+    df_final = pd.concat(df_result, ignore_index=True)
+    return df_final
+
+# ---------- Streamlit tab ----------
 if selected_tab == "📌 Poslednje stanje kola":
     st.subheader("📌 Poslednje stanje kola")
-
+    
     if st.button("🔎 Prikaži poslednje stanje kola", key="btn_last_state"):
         try:
-            # Upit za poslednje stanje kola
-            q_last_optimized = """
-                SELECT s."Broj kola" AS broj_stanje,
-                       k."Broj kola" AS broj_kola_raw,
-                       k.*
-                FROM stanje s
-                LEFT JOIN (
-                    SELECT 
-                        TRY_CAST(SUBSTR("Broj kola", 3, LENGTH("Broj kola") - 3) AS BIGINT) AS broj_clean,
-                        *
-                    FROM kola
-                ) k
-                  ON TRY_CAST(s."Broj kola" AS BIGINT) = k.broj_clean
-                QUALIFY ROW_NUMBER() OVER (
-                    PARTITION BY s."Broj kola"
-                    ORDER BY k.DatumVreme DESC
-            ) = 1
-            LIMIT 10
-            """
-            # Lazy DuckDB pristup
-            import duckdb
-            lazy_con = duckdb.connect(database=DB_FILE, read_only=True).cursor()
-            df_last = lazy_con.execute(q_last_optimized).fetchdf()
-
-            # Progres bar simulacija (ako je veliki dataset)
-            with st.spinner("🔄 Priprema podataka..."):
-                # Ukloni tehničke kolone
-                for col in ["broj_clean", "broj_clean_1"]:
-                    if col in df_last.columns:
-                        df_last.drop(columns=[col], inplace=True)
-
-                # Dodaj nazive stanica
-                df_last = add_station_names(df_last)
-
-                # Formatiraj numeričke kolone
-                df_last = format_numeric(df_last)
-
+            df_last = get_last_state(con, batch_size=100)
+            
+            # Dodaj nazive stanica
+            df_last = add_station_names(df_last)
+            
+            # Formatiraj numeričke kolone
+            df_last = format_numeric(df_last)
+            
             st.success(f"✅ Pronađeno {len(df_last)} poslednjih unosa za kola iz Excel tabele.")
             st.dataframe(df_last, use_container_width=True)
-
-            # Download u Excel
+            
+            # Eksport Excel
             excel_buffer = io.BytesIO()
             with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
                 df_last.to_excel(writer, index=False, sheet_name="Poslednje stanje")
             st.download_button(
-                "⬇️ Preuzmi kao Excel", 
+                "⬇️ Preuzmi kao Excel",
                 data=excel_buffer.getvalue(),
                 file_name="poslednje_stanje.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-
         except Exception as e:
-            st.error(f"Greška u upitu: {e}")
+            st.error(f"Greška u procesu: {e}")
+
 # ---------- Tab 3: SQL upiti ----------
 if selected_tab == "🔎 SQL upiti":
     st.subheader("🔎 SQL upiti")
