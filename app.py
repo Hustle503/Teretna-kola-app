@@ -356,16 +356,20 @@ if selected_tab == "📌 Poslednje stanje kola":
         try:
             # Upit za poslednje stanje kola
             q_last_optimized = """
+            WITH kola_clean AS (
+                SELECT *,
+                       TRY_CAST(SUBSTRING("Broj kola" FROM 3) AS BIGINT) AS broj_kola_num
+                FROM kola
+            )
             SELECT s."Broj kola" AS broj_stanje,
-                k."Broj kola" AS broj_kola_raw,
-                TRY_CAST(SUBSTRING(k."Broj kola" FROM 3) AS BIGINT) AS broj_clean,
-                k.*
+                   k."Broj kola" AS broj_kola_raw,
+                   k.*
             FROM stanje s
-            LEFT JOIN kola k
-                ON TRY_CAST(s."Broj kola" AS BIGINT) = TRY_CAST(SUBSTRING(k."Broj kola" FROM 3) AS BIGINT)
+            LEFT JOIN kola_clean k
+                   ON TRY_CAST(s."Broj kola" AS BIGINT) = k.broj_kola_num
             QUALIFY ROW_NUMBER() OVER (
-                PARTITION BY s."Broj kola"
-                ORDER BY k.DatumVreme DESC
+                   PARTITION BY s."Broj kola"
+               ORDER BY k.DatumVreme DESC
             ) = 1
             LIMIT 4200
             """
