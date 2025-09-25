@@ -1972,12 +1972,12 @@ if selected_tab == "🔧 Revizija":
             try:
                 # Učitavanje Excel fajlova samo jednom
                 df_stanje = pd.read_excel("Stanje SK.xlsx")
-                df_stanje["Broj kola"] = df_stanje["Broj kola"].astype(str).str.strip()
+                df_stanje["Broj kola"] = pd.to_numeric(df_stanje["Broj kola"], errors="coerce").astype('Int64')
                 df_stanje = df_stanje.rename(columns={"3": "Serija"})
                 df_stanje = df_stanje[["Broj kola", "Serija", "PR", "NR", "TelegBaza", "Napomena"]]
 
                 df_opravke = pd.read_excel("Redovne opravke.xlsx")
-                df_opravke["Broj kola"] = df_opravke["Broj kola"].astype(str).str.strip()
+                df_opravke["Broj kola"] = pd.to_numeric(df_opravke["Broj kola"], errors="coerce").astype('Int64')
                 df_opravke.columns = df_opravke.columns.str.strip()
                 df_opravke["Datum revizije"] = pd.to_datetime(df_opravke["Datum revizije"], errors="coerce")
                 df_opravke["Datum naredne revizije"] = pd.to_datetime(df_opravke["Datum naredne revizije"], errors="coerce")
