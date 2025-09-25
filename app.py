@@ -11,6 +11,15 @@ from datetime import date
 from huggingface_hub import hf_hub_download, Repository, HfApi
 
 
+import os
+import glob
+import json
+import pandas as pd
+import polars as pl
+import duckdb
+import streamlit as st
+from huggingface_hub import Repository, HfApi, hf_hub_download
+
 # -------------------- KONFIG --------------------
 st.set_page_config(layout="wide", page_title="🚂 Teretna kola SK")
 ADMIN_PASS = "tajna123"
@@ -23,7 +32,6 @@ HF_REPO = "Hustle503/baza"
 
 # -------------------- HF HELPERS --------------------
 def push_file_to_hf(local_path, commit_message="update"):
-    """Push fajla na Hugging Face repo koristeći token"""
     repo_dir = "/tmp/hf_repo"
     os.makedirs(repo_dir, exist_ok=True)
     repo = Repository(local_dir=repo_dir, clone_from=HF_REPO, use_auth_token=HF_TOKEN)
@@ -88,34 +96,12 @@ def parse_txt(path) -> pl.DataFrame:
                 "Status": line[25:27].strip(),
                 "Datum": line[27:35].strip(),
                 "Vreme": line[35:39].strip(),
-                "Roba": line[41:47].strip(),
-                "Rid": line[47:48].strip(),
-                "UN broj": line[48:52].strip(),
-                "Reon": line[61:66].strip(),
-                "tara": line[78:81].strip(),
-                "NetoTone": line[83:86].strip(),
-                "dužina vagona": line[88:91].strip(),
-                "broj osovina": line[98:100].strip(),
-                "Otp. država": line[123:125].strip(),
-                "Otp st": line[125:130].strip(),
-                "Uputna država": line[130:132].strip(),
-                "Up st": line[132:137].strip(),
-                "Broj kola": line[0:12].strip(),
-                "Redni broj kola": line[57:59].strip(),
                 "source_file": os.path.basename(path),
             })
     df = pl.DataFrame(rows)
     df = df.with_columns([
-        pl.when(pl.col("Vreme")=="2400").then(pl.lit("0000")).otherwise(pl.col("Vreme")).alias("Vreme"),
-        pl.when(pl.col("Vreme")=="2400").then(
-            (pl.col("Datum").str.strptime(pl.Date,"%Y%m%d",strict=False)+pl.duration(days=1))
-            .dt.strftime("%Y%m%d")
-        ).otherwise(pl.col("Datum")).alias("Datum"),
         (pl.col("Datum")+" "+pl.col("Vreme")).str.strptime(pl.Datetime,"%Y%m%d %H%M",strict=False).alias("DatumVreme"),
-        pl.col("Datum").str.strptime(pl.Date,"%Y%m%d",strict=False).is_not_null().alias("Datum_validan"),
-        (pl.col("tara").str.slice(0,2)+"."+pl.col("tara").str.slice(2)).cast(pl.Float64).alias("tara"),
-        (pl.col("NetoTone").str.slice(0,2)+"."+pl.col("NetoTone").str.slice(2)).cast(pl.Float64).alias("NetoTone"),
-        (pl.col("dužina vagona").str.slice(0,2)+"."+pl.col("dužina vagona").str.slice(2)).cast(pl.Float64).alias("dužina vagona"),
+        pl.arange(0, df.height).alias("id")
     ])
     return df
 
@@ -127,7 +113,6 @@ def init_database(folder: str, TABLE_NAME: str = TABLE_NAME):
         return
     all_dfs = [parse_txt(f) for f in files]
     df = pl.concat(all_dfs)
-    df = df.with_columns(pl.arange(0, df.height).alias("id"))
     con.execute(f"DROP TABLE IF EXISTS {TABLE_NAME}")
     con.register("df", df)
     con.execute(f"CREATE TABLE {TABLE_NAME} AS SELECT * FROM df")
@@ -164,13 +149,9 @@ def update_database(folder: str, TABLE_NAME: str = TABLE_NAME):
 
 # -------------------- Dodavanje pojedinačnog fajla --------------------
 def add_file_streamlit(uploaded_file, TABLE_NAME=TABLE_NAME):
-    if uploaded_file is None:
-        st.warning("⚠️ Niste izabrali fajl.")
-        return
     tmp_path = os.path.join(DEFAULT_FOLDER, uploaded_file.name)
     with open(tmp_path,"wb") as f:
         f.write(uploaded_file.getbuffer())
-    # TXT ili Excel
     if uploaded_file.name.lower().endswith(".txt"):
         df_new = parse_txt(tmp_path)
         max_id = run_sql(f"SELECT MAX(id) AS max_id FROM {TABLE_NAME}").iloc[0,0]
@@ -186,29 +167,122 @@ def add_file_streamlit(uploaded_file, TABLE_NAME=TABLE_NAME):
         con.unregister("df_new")
     elif uploaded_file.name.lower().endswith(".xlsx"):
         df_excel = pd.read_excel(tmp_path)
-        TABLE_XLSX = uploaded_file.name.rsplit(".", 1)[0]  # ime tabele iz fajla
+        TABLE_XLSX = uploaded_file.name.rsplit(".", 1)[0]
         tables = [t[0] for t in con.execute("SHOW TABLES").fetchall()]
         if TABLE_XLSX in tables:
             con.execute(f'DROP TABLE IF EXISTS "{TABLE_XLSX}"')
         con.register("df_excel", df_excel)
         con.execute(f'CREATE TABLE "{TABLE_XLSX}" AS SELECT * FROM df_excel')
         con.unregister("df_excel")
-        st.success(f"✅ Excel fajl '{uploaded_file.name}' dodat u '{TABLE_XLSX}' ({len(df_excel)} redova)")
-
-    # Push fajl na Hugging Face
-    def push_file_to_hf(local_path):
-        api = HfApi()
-        api.upload_file(
-            path_or_fileobj=local_path,
-            path_in_repo=os.path.basename(local_path),
-            repo_id=HF_REPO,
-            token=HF_TOKEN,
-            repo_type="dataset"
-        )
-
-    # --- Kod u Streamlit-u ---
-    push_file_to_hf(tmp_path)
+    push_file_to_hf(tmp_path, commit_message=f"Upload: {uploaded_file.name}")
     st.info(f"ℹ️ Fajl '{uploaded_file.name}' poslat na Hugging Face")
+
+# -------------------- STREAMLIT UI --------------------
+if "admin_logged_in" not in st.session_state:
+    st.session_state.admin_logged_in = False
+
+st.sidebar.title("⚙️ Podešavanja")
+if not st.session_state.admin_logged_in:
+    password = st.sidebar.text_input("🔑 Unesi lozinku:", type="password")
+    if st.sidebar.button("🔓 Otključaj"):
+        if password == ADMIN_PASS:
+            st.session_state.admin_logged_in = True
+            st.sidebar.success("✅ Uspešno ste se prijavili!")
+        else:
+            st.sidebar.error("❌ Pogrešna lozinka.")
+    st.sidebar.warning("🔒 Podešavanja su zaključana.")
+else:
+    if st.sidebar.button("🚪 Odjavi se"):
+        st.session_state.admin_logged_in = False
+        st.sidebar.warning("🔒 Odjavljeni ste.")
+
+# -------------------- Admin Tabovi --------------------
+if st.session_state.admin_logged_in:
+    admin_tabs = st.tabs([
+        "📂 Inicijalizacija / Update baze",
+        "🔍 Duplikati",
+        "📄 Upload Excel",
+        "📊 Pregled učitanih fajlova"
+    ])
+
+    # === TAB 1 ===
+    with admin_tabs[0]:
+        folder_path = st.text_input("Folder sa TXT fajlovima", value=DEFAULT_FOLDER)
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🚀 Inicijalizuj bazu"):
+                init_database(folder_path)
+        with col2:
+            if st.button("🔄 Update baze iz foldera"):
+                update_database(folder_path)
+
+        st.divider()
+        uploaded_file = st.file_uploader("Izaberite TXT ili Excel fajl", type=["txt","xlsx"])
+        if st.button("📥 Dodaj fajl"):
+            if uploaded_file:
+                add_file_streamlit(uploaded_file)
+            else:
+                st.warning("⚠️ Niste izabrali fajl.")
+
+    # === TAB 2 ===
+    with admin_tabs[1]:
+        st.subheader("🔍 Duplikati")
+        filter_godina = st.text_input("Godina (YYYY)", max_chars=4, key="dupl_godina")
+        filter_mesec = st.text_input("Mesec (MM)", max_chars=2, key="dupl_mesec")
+        def get_where_clause(godina, mesec=None):
+            clause = f"WHERE SUBSTR(CAST(DatumVreme AS VARCHAR),1,4)='{godina}'"
+            if mesec:
+                clause += f" AND SUBSTR(CAST(DatumVreme AS VARCHAR),5,2)='{mesec}'"
+            return clause
+        def get_dupes_sql(godina, mesec=None):
+            return f"""
+                WITH dupl AS (
+                    SELECT *, ROW_NUMBER() OVER (
+                        PARTITION BY "Režim","Vlasnik","Serija","Inv br","KB","Tip kola","Voz br",
+                        "Stanica","Status","Roba","Rid","UN broj","Reon","tara","NetoTone",
+                        "dužina vagona","broj osovina","Otp. država","Otp st","Uputna država",
+                        "Up st","Broj kola","Redni broj kola"
+                        ORDER BY DatumVreme
+                    ) AS rn FROM kola {get_where_clause(godina, mesec)}
+                ) SELECT * FROM dupl WHERE rn>1
+            """
+        if st.button("🔍 Proveri duplikate"):
+            if not filter_godina:
+                st.warning("⚠️ Unesite godinu.")
+            else:
+                dupes = run_sql(get_dupes_sql(filter_godina, filter_mesec))
+                if dupes.empty:
+                    st.success("✅ Duplikata nema")
+                else:
+                    st.warning(f"⚠️ Pronađeno {len(dupes)} duplikata!")
+                    st.dataframe(dupes, use_container_width=True)
+
+    # === TAB 3 ===
+    with admin_tabs[2]:
+        st.subheader("📄 Upload Excel tabele")
+        uploaded_excel = st.file_uploader("Izaberi Excel fajl", type=["xlsx"], key="excel_upload_tab3")
+        if st.button("⬆️ Upload / Update Excel"):
+            if uploaded_excel:
+                add_file_streamlit(uploaded_excel)
+            else:
+                st.warning("⚠️ Niste izabrali Excel fajl.")
+
+    # === TAB 4 ===
+    with admin_tabs[3]:
+        st.subheader("📊 Pregled učitanih fajlova")
+        try:
+            df_by_file = run_sql(
+                f'''
+                SELECT source_file, COUNT(*) AS broj
+                FROM "{TABLE_NAME}"
+                GROUP BY source_file
+                ORDER BY broj DESC
+                LIMIT 20
+                '''
+            )
+            st.dataframe(df_by_file, use_container_width=True)
+        except Exception as e:
+            st.warning(f"Ne mogu da pročitam bazu: {e}")
 
 tab_buttons = [
     "📊 Pregled",
