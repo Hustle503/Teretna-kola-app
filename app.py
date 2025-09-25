@@ -196,8 +196,19 @@ def add_file_streamlit(uploaded_file, TABLE_NAME=TABLE_NAME):
         st.success(f"✅ Excel fajl '{uploaded_file.name}' dodat u '{TABLE_XLSX}' ({len(df_excel)} redova)")
 
     # Push fajl na Hugging Face
-    push_file_to_hf(tmp_path, commit_message=f"Upload: {uploaded_file.name}")
-    st.info(f"ℹ️ Fajl '{uploaded_file.name}' poslat na Hugging Face") 
+    def push_file_to_hf(local_path):
+    api = HfApi()
+    api.upload_file(
+        path_or_fileobj=local_path,
+        path_in_repo=os.path.basename(local_path),
+        repo_id=HF_REPO,
+        token=HF_TOKEN,
+        repo_type="dataset"
+    )
+
+# --- Kod u Streamlit-u ---
+push_file_to_hf(tmp_path)
+st.info(f"ℹ️ Fajl '{uploaded_file.name}' poslat na Hugging Face")
 
 tab_buttons = [
     "📊 Pregled",
