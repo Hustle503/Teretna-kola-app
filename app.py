@@ -354,24 +354,7 @@ if selected_tab == "📌 Poslednje stanje kola":
 
     if st.button("🔎 Prikaži poslednje stanje kola", key="btn_last_state"):
         try:
-            q_last = """
-                SELECT s."Broj kola" AS broj_stanje,
-                       k."Broj kola" AS broj_kola_raw,
-                       k.*
-                FROM stanje s
-                LEFT JOIN (
-                    SELECT 
-                        TRY_CAST(SUBSTR("Broj kola", 3, LENGTH("Broj kola") - 3) AS BIGINT) AS broj_clean,
-                        *
-                    FROM kola
-                ) k
-                  ON TRY_CAST(s."Broj kola" AS BIGINT) = k.broj_clean
-                QUALIFY ROW_NUMBER() OVER (
-                    PARTITION BY s."Broj kola"
-                    ORDER BY k.DatumVreme DESC
-                ) = 1
-            """
-            df_last = run_sql(q_last)
+            df_last = run_sql(q_last_optimized)
 
             # Ukloni tehničke kolone
             for col in ["broj_clean", "broj_clean_1"]:
@@ -386,7 +369,6 @@ if selected_tab == "📌 Poslednje stanje kola":
 
             st.success(f"✅ Pronađeno {len(df_last)} poslednjih unosa za kola iz Excel tabele.")
             st.dataframe(df_last, use_container_width=True)
-
 
             # Eksport Excel
             excel_buffer = io.BytesIO()
