@@ -355,6 +355,7 @@ if selected_tab == "📌 Poslednje stanje kola":
     if st.button("🔎 Prikaži poslednje stanje kola", key="btn_last_state"):
         try:
             # Upit za poslednje stanje kola
+            q_last_optimized = """
             SELECT s."Broj kola" AS broj_stanje,
                 k."Broj kola" AS broj_kola_raw,
                 TRY_CAST(SUBSTRING(k."Broj kola" FROM 3) AS BIGINT) AS broj_clean,
@@ -367,6 +368,7 @@ if selected_tab == "📌 Poslednje stanje kola":
                 ORDER BY k.DatumVreme DESC
             ) = 1
             LIMIT 1000
+            """
             # Lazy DuckDB pristup
             import duckdb
             lazy_con = duckdb.connect(database=DB_FILE, read_only=True).cursor()
