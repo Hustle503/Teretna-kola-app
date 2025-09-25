@@ -48,17 +48,26 @@ def get_duckdb_connection(db_file=DB_FILE):
 
 # Kreiraj konekciju
 con = get_duckdb_connection()
-# --- Jednokratno dodavanje kolone broj_clean ---
-try:
-    con.execute("ALTER TABLE kola ADD COLUMN broj_clean BIGINT")
-except Exception:
-    pass
+# -------------------- Priprema kolone broj_clean --------------------
+st.info("⚙️ Proveravam i pripremam kolonu broj_clean...")
 
-# Pretvaranje Broj kola u broj_clean
+# Proveri da li kolona postoji
+columns = [c[1] for c in con.execute("PRAGMA table_info(kola)").fetchall()]
+if "broj_clean" not in columns:
+    st.warning("⚠️ Kolona broj_clean ne postoji, dodajem je...")
+    con.execute("ALTER TABLE kola ADD COLUMN broj_clean BIGINT")
+    st.success("✅ Kolona broj_clean dodata.")
+
+# Popuni broj_clean sa numeričkim delom Broj kola
+try:
     con.execute("""
-    UPDATE kola
-    SET broj_clean = TRY_CAST(SUBSTRING("Broj kola" FROM 3) AS BIGINT)
+        UPDATE kola
+        SET broj_clean = TRY_CAST(SUBSTRING("Broj kola" FROM 3) AS BIGINT)
+        WHERE broj_clean IS NULL
     """)
+    st.success("✅ Kolona broj_clean popunjena.")
+except Exception as e:
+    st.error(f"❌ Greška pri popunjavanju broj_clean: {e}")
 # Definicija helper funkcije
 @st.cache_data
 def run_sql(sql: str) -> pd.DataFrame:
