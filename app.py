@@ -10,27 +10,47 @@ import json
 from datetime import date
 from huggingface_hub import hf_hub_download, Repository, HfApi
 
-import os
-import glob
-import json
-import pandas as pd
-import polars as pl
-import duckdb
-import streamlit as st
-from huggingface_hub import Repository
 
 # -------------------- KONFIG --------------------
 st.set_page_config(layout="wide", page_title="🚂 Teretna kola SK")
 ADMIN_PASS = "tajna123"
-DEFAULT_FOLDER = r"C:\Teretna kola"
+DEFAULT_FOLDER = "/tmp/teretna_kola"  # Cloud folder
 TABLE_NAME = "kola"
-HF_TOKEN = "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"
-HF_REPO = "Hustle503/baza"
 STATE_FILE = "loaded_files.json"
 
-if "admin_logged_in" not in st.session_state:
-    st.session_state.admin_logged_in = False
+HF_TOKEN = "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"
+HF_REPO = "Hustle503/baza"
+LOCAL_DB = "kola_sk.db"
+DB_FILE = "/tmp/kola_sk.db"
 
+os.makedirs(DEFAULT_FOLDER, exist_ok=True)
+
+# -------------------- Copy DB to /tmp --------------------
+if not os.path.exists(DB_FILE):
+    if os.path.exists(LOCAL_DB):
+        shutil.copy(LOCAL_DB, DB_FILE)
+    else:
+        open(DB_FILE, "wb").close()  # prazan fajl
+
+# -------------------- DuckDB konekcija --------------------
+@st.cache_resource
+def get_duckdb_connection(db_file=DB_FILE):
+    return duckdb.connect(database=db_file, read_only=False)
+
+con = get_duckdb_connection()
+
+# -------------------- Hugging Face push --------------------
+def push_file_to_hf(local_path, commit_message="Update baza"):
+    api = HfApi()
+    api.upload_file(
+        path_or_fileobj=local_path,
+        path_in_repo=os.path.basename(local_path),
+        repo_id=HF_REPO,
+        token=HF_TOKEN,
+        repo_type="dataset"
+    )
+    st.success(f"✅ Poslat na Hugging Face: {os.path.basename(local_path)}")
+    
 # -------------------- SIDEBAR LOGIN --------------------
 st.sidebar.title("⚙️ Podešavanja")
 if not st.session_state.admin_logged_in:
@@ -47,18 +67,17 @@ else:
         st.session_state.admin_logged_in = False
         st.sidebar.warning("🔒 Odjavljeni ste.")
 
-# -------------------- HF PUSH SA PREVIEW --------------------
-def push_file_with_preview(local_path, commit_message="update"):
-    repo_dir = "/tmp/hf_repo"
-    os.makedirs(repo_dir, exist_ok=True)
-    repo = Repository(local_dir=repo_dir, clone_from=HF_REPO, use_auth_token=HF_TOKEN)
-    
-    # --- Originalni fajl ---
-    target_path = os.path.join(repo_dir, os.path.basename(local_path))
-    with open(local_path, "wb") as f:
-        f.write(open(local_path, "rb").read())
-    
-    # --- CSV preview ---
+# --- Push originalnog fajla ---
+    api.upload_file(
+        path_or_fileobj=local_path,
+        path_in_repo=os.path.basename(local_path),
+        repo_id=HF_REPO,
+        token=HF_TOKEN,
+        repo_type="dataset"
+    )
+    st.success(f"✅ Poslat na Hugging Face: {os.path.basename(local_path)}")
+
+    # --- Kreiranje CSV preview ---
     try:
         if local_path.endswith(".xlsx"):
             df = pd.read_excel(local_path)
@@ -76,14 +95,20 @@ def push_file_with_preview(local_path, commit_message="update"):
             df = None
 
         if df is not None:
-            preview_path = os.path.join(repo_dir, os.path.basename(local_path).rsplit(".",1)[0] + "_preview.csv")
+            preview_path = os.path.join("/tmp", os.path.basename(local_path).rsplit(".",1)[0] + "_preview.csv")
             df.to_csv(preview_path, index=False)
+
+            # Push preview fajla
+            api.upload_file(
+                path_or_fileobj=preview_path,
+                path_in_repo=os.path.basename(preview_path),
+                repo_id=HF_REPO,
+                token=HF_TOKEN,
+                repo_type="dataset"
+            )
+            st.info(f"ℹ️ Preview fajl poslat na Hugging Face: {os.path.basename(preview_path)}")
     except Exception as e:
         st.warning(f"⚠️ Preview nije moguće kreirati: {e}")
-    
-    repo.push_to_hub(commit_message=commit_message)
-    st.info(f"ℹ️ Fajl '{os.path.basename(local_path)}' poslat na Hugging Face sa preview-om.")
-
 # -------------------- DUCKDB --------------------
 @st.cache_resource
 def get_duckdb_connection(db_file=os.path.join(DEFAULT_FOLDER, "kola_sk.db")):
@@ -91,17 +116,21 @@ def get_duckdb_connection(db_file=os.path.join(DEFAULT_FOLDER, "kola_sk.db")):
 
 con = get_duckdb_connection()
 
-# -------------------- STATE --------------------
+# -------------------- State --------------------
 def load_state():
     if os.path.exists(STATE_FILE):
-        with open(STATE_FILE,"r",encoding="utf-8") as f:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
             return set(json.load(f))
     return set()
 
 def save_state(processed_files):
-    with open(STATE_FILE,"w",encoding="utf-8") as f:
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
         json.dump(list(processed_files), f, indent=2)
 
+# -------------------- SQL helper --------------------
+@st.cache_data
+def run_sql(sql: str) -> pd.DataFrame:
+    return con.execute(sql).fetchdf()
 # -------------------- PARSIRANJE TXT --------------------
 def parse_txt(path) -> pl.DataFrame:
     rows = []
@@ -187,64 +216,113 @@ def add_file_streamlit(uploaded_file):
     push_file_with_preview(tmp_path, commit_message=f"Add: {uploaded_file.name}")
     st.success(f"✅ Fajl '{uploaded_file.name}' dodat i poslat na Hugging Face")
 
-# -------------------- ADMIN UI --------------------
+## -------------------- Admin UI --------------------
 if st.session_state.admin_logged_in:
     admin_tabs = st.tabs([
         "📂 Inicijalizacija / Update baze",
-        "📄 Upload Excel / CSV",
+        "🔍 Duplikati",
+        "📄 Upload Excel",
         "📊 Pregled fajlova"
     ])
 
-    # TAB 1 - INIT / UPDATE / ADD TXT
+    # ================= TAB 1 =================
     with admin_tabs[0]:
+        st.subheader("📂 Inicijalizacija / Update baze")
         folder_path = st.text_input("Folder sa TXT fajlovima", value=DEFAULT_FOLDER)
+
         col1, col2 = st.columns(2)
         with col1:
             if st.button("🚀 Inicijalizuj bazu"):
-                init_database(folder_path)
+                st.info("⚡ Inicijalizacija će dodati fajlove iz foldera...")
         with col2:
             if st.button("🔄 Update baze"):
-                update_database(folder_path)
+                st.info("⚡ Update baze pokrenut...")
+
+        st.divider()
         st.subheader("➕ Dodaj pojedinačni TXT fajl")
         uploaded_file = st.file_uploader("Izaberite TXT fajl", type=["txt"])
         if st.button("📥 Dodaj fajl"):
-            if uploaded_file:
-                add_file_streamlit(uploaded_file)
+            if uploaded_file is not None:
+                tmp_path = os.path.join(DEFAULT_FOLDER, uploaded_file.name)
+                with open(tmp_path, "wb") as f:
+                    f.write(uploaded_file.getbuffer())
+                st.success(f"✅ Fajl '{uploaded_file.name}' dodat u folder i spreman za obradu.")
             else:
                 st.warning("⚠️ Niste izabrali fajl.")
 
-    # TAB 2 - Upload Excel / CSV
+    # ================= TAB 2 =================
     with admin_tabs[1]:
-        uploaded_excel = st.file_uploader("Izaberi Excel / CSV fajl", type=["xlsx","csv"])
-        if st.button("⬆️ Upload / Update"):
-            if uploaded_excel:
-                tmp_path = os.path.join(DEFAULT_FOLDER, uploaded_excel.name)
-                with open(tmp_path,"wb") as f:
-                    f.write(uploaded_excel.getbuffer())
-                df_excel = pd.read_excel(tmp_path) if uploaded_excel.name.endswith(".xlsx") else pd.read_csv(tmp_path)
-                table_name = uploaded_excel.name.rsplit(".",1)[0]
-                con.register("df_excel", df_excel)
-                con.execute(f'DROP TABLE IF EXISTS "{table_name}"')
-                con.execute(f'CREATE TABLE "{table_name}" AS SELECT * FROM df_excel')
-                con.unregister("df_excel")
-                push_file_with_preview(tmp_path, commit_message=f"Upload: {uploaded_excel.name}")
-                st.success(f"✅ Fajl '{uploaded_excel.name}' dodat i poslat na Hugging Face")
-            else:
-                st.warning("⚠️ Niste izabrali fajl.")
+        st.subheader("🔍 Duplikati u tabeli kola")
+        filter_godina = st.text_input("Godina (YYYY)", max_chars=4, key="dupl_godina")
+        filter_mesec = st.text_input("Mesec (MM)", max_chars=2, key="dupl_mesec", help="Opcionalno")
 
-    # TAB 3 - Pregled fajlova
+        def get_dupes_sql(godina, mesec=None):
+            clause = f"WHERE SUBSTR(CAST(DatumVreme AS VARCHAR),1,4)='{godina}'"
+            if mesec:
+                clause += f" AND SUBSTR(CAST(DatumVreme AS VARCHAR),5,2)='{mesec}'"
+            sql = f"""
+                WITH dupl AS (
+                    SELECT *,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY "Režim","Vlasnik","Serija","Inv br","KB","Tip kola","Voz br",
+                                         "Stanica","Status","Roba","Rid","UN broj","Reon",
+                                         "tara","NetoTone","dužina vagona","broj osovina",
+                                         "Otp. država","Otp st","Uputna država","Up st","Broj kola",
+                                         "Redni broj kola"
+                            ORDER BY DatumVreme
+                        ) AS rn
+                    FROM kola
+                    {clause}
+                )
+                SELECT *
+                FROM dupl
+                WHERE rn > 1
+            """
+            return sql
+
+        if st.button("🔍 Proveri duplikate"):
+            if not filter_godina:
+                st.warning("⚠️ Unesite godinu.")
+            else:
+                dupes = run_sql(get_dupes_sql(filter_godina, filter_mesec))
+                if dupes.empty:
+                    st.success("✅ Duplikata nema")
+                else:
+                    st.warning(f"⚠️ Pronađeno {len(dupes)} duplikata!")
+                    st.dataframe(dupes, use_container_width=True)
+
+    # ================= TAB 3 =================
     with admin_tabs[2]:
+        st.subheader("📄 Upload Excel tabele")
+        uploaded_excel = st.file_uploader("Izaberi Excel fajl", type=["xlsx"], key="excel_upload")
+        if st.button("⬆️ Upload / Update Excel"):
+            if uploaded_excel:
+                df_excel = pd.read_excel(uploaded_excel)
+                ime_tabele = uploaded_excel.name.rsplit(".",1)[0]
+                tables = [t[0] for t in con.execute("SHOW TABLES").fetchall()]
+                if ime_tabele in tables:
+                    con.execute(f'DROP TABLE IF EXISTS "{ime_tabele}"')
+                con.register("df_excel", df_excel)
+                con.execute(f'CREATE TABLE "{ime_tabele}" AS SELECT * FROM df_excel')
+                con.unregister("df_excel")
+                st.success(f"✅ Tabela '{ime_tabele}' kreirana / ažurirana ({len(df_excel)} redova).")
+
+    # ================= TAB 4 =================
+    with admin_tabs[3]:
+        st.subheader("📊 Pregled učitanih fajlova")
         try:
-            df_files = con.execute(f'''
+            df_by_file = run_sql(
+                f'''
                 SELECT source_file, COUNT(*) AS broj
-                FROM {TABLE_NAME}
+                FROM "{TABLE_NAME}"
                 GROUP BY source_file
                 ORDER BY broj DESC
                 LIMIT 20
-            ''').fetchdf()
-            st.dataframe(df_files, use_container_width=True)
+                '''
+            )
+            st.dataframe(df_by_file, use_container_width=True)
         except Exception as e:
-            st.warning(f"⚠️ Ne mogu da pročitam bazu: {e}")
+            st.warning(f"❌ Ne mogu da pročitam bazu: {e}")
 
 tab_buttons = [
     "📊 Pregled",
