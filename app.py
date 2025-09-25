@@ -355,7 +355,7 @@ if selected_tab == "📌 Poslednje stanje kola":
     if st.button("🔎 Prikaži poslednje stanje kola", key="btn_last_state"):
         try:
             # Upit za poslednje stanje kola
-            q_last = """
+            q_last_optimized = """
                 SELECT s."Broj kola" AS broj_stanje,
                        k."Broj kola" AS broj_kola_raw,
                        k.*
