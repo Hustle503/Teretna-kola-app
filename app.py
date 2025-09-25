@@ -48,26 +48,7 @@ def get_duckdb_connection(db_file=DB_FILE):
 
 # Kreiraj konekciju
 con = get_duckdb_connection()
-# -------------------- Priprema kolone broj_clean --------------------
-st.info("⚙️ Proveravam i pripremam kolonu broj_clean...")
 
-# Proveri da li kolona postoji
-columns = [c[1] for c in con.execute("PRAGMA table_info(kola)").fetchall()]
-if "broj_clean" not in columns:
-    st.warning("⚠️ Kolona broj_clean ne postoji, dodajem je...")
-    con.execute("ALTER TABLE kola ADD COLUMN broj_clean BIGINT")
-    st.success("✅ Kolona broj_clean dodata.")
-
-# Popuni broj_clean sa numeričkim delom Broj kola
-try:
-    con.execute("""
-        UPDATE kola
-        SET broj_clean = TRY_CAST(SUBSTRING("Broj kola" FROM 3) AS BIGINT)
-        WHERE broj_clean IS NULL
-    """)
-    st.success("✅ Kolona broj_clean popunjena.")
-except Exception as e:
-    st.error(f"❌ Greška pri popunjavanju broj_clean: {e}")
 # Definicija helper funkcije
 @st.cache_data
 def run_sql(sql: str) -> pd.DataFrame:
@@ -374,19 +355,18 @@ if selected_tab == "📌 Poslednje stanje kola":
     if st.button("🔎 Prikaži poslednje stanje kola", key="btn_last_state"):
         try:
             # Upit za poslednje stanje kola
-            q_last_optimized = """
             SELECT s."Broj kola" AS broj_stanje,
-                   k."Broj kola" AS broj_kola_raw,
-                   k.*
+                k."Broj kola" AS broj_kola_raw,
+                TRY_CAST(SUBSTRING(k."Broj kola" FROM 3) AS BIGINT) AS broj_clean,
+                k.*
             FROM stanje s
             LEFT JOIN kola k
-                   ON s."Broj kola" = k.broj_clean
+                ON TRY_CAST(s."Broj kola" AS BIGINT) = TRY_CAST(SUBSTRING(k."Broj kola" FROM 3) AS BIGINT)
             QUALIFY ROW_NUMBER() OVER (
                 PARTITION BY s."Broj kola"
                 ORDER BY k.DatumVreme DESC
             ) = 1
-            """
-
+            LIMIT 1000
             # Lazy DuckDB pristup
             import duckdb
             lazy_con = duckdb.connect(database=DB_FILE, read_only=True).cursor()
