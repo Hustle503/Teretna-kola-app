@@ -45,8 +45,8 @@ DB_FILE = get_db_file()
 def get_duckdb_connection(db_file):
     return duckdb.connect(database=db_file, read_only=True)
 
+con = get_duckdb_connection(DB_FILE)
 con = get_duckdb_connection()
-
 # Definicija helper funkcije
 @st.cache_data
 def run_sql(sql: str) -> pd.DataFrame:
