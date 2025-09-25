@@ -11,40 +11,32 @@ from datetime import date
 from huggingface_hub import hf_hub_download, Repository, HfApi
 
 
-# -------------------- KONFIG --------------------
-st.set_page_config(layout="wide", page_title="🚂 Teretna kola SK")
-ADMIN_PASS = "tajna123"
-DEFAULT_FOLDER = "/tmp/teretna_kola"  # Cloud folder
-TABLE_NAME = "kola"
-STATE_FILE = "loaded_files.json"
-
-HF_TOKEN = "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"
-HF_REPO = "Hustle503/baza"
-LOCAL_DB = "kola_sk.db"
-DB_FILE = hf_hub_download(
-    repo_id=HF_REPO,
-    filename="kola_sk.db",
-    repo_type="dataset",
-    token=HF_TOKEN
-)
-
-st.write("DB_FILE path:", DB_FILE)   # opcionalno za debug
-
-os.makedirs(DEFAULT_FOLDER, exist_ok=True)
-
-# -------------------- Copy DB to /tmp --------------------
-if not os.path.exists(DB_FILE):
-    if os.path.exists(LOCAL_DB):
-        shutil.copy(LOCAL_DB, DB_FILE)
-    else:
-        open(DB_FILE, "wb").close()  # prazan fajl
-
-# -------------------- DuckDB konekcija --------------------
+# -------------------- DUCKDB KONEXIJA --------------------
 @st.cache_resource
-def get_duckdb_connection(db_file=DB_FILE):
-    return duckdb.connect(database=db_file, read_only=False)
+def get_duckdb_connection():
+    return duckdb.connect(database=DB_FILE, read_only=True)
 
 con = get_duckdb_connection()
+
+# -------------------- ADMIN LOGIN --------------------
+if "admin_logged_in" not in st.session_state:
+    st.session_state.admin_logged_in = False
+
+st.sidebar.title("⚙️ Podešavanja")
+if not st.session_state.admin_logged_in:
+    password = st.sidebar.text_input("🔑 Unesi lozinku:", type="password")
+    if st.sidebar.button("🔓 Otključaj"):
+        if password == ADMIN_PASS:
+            st.session_state.admin_logged_in = True
+            st.sidebar.success("✅ Uspešno ste se prijavili!")
+        else:
+            st.sidebar.error("❌ Pogrešna lozinka.")
+    st.sidebar.warning("🔒 Podešavanja su zaključana.")
+else:
+    if st.sidebar.button("🚪 Odjavi se"):
+        st.session_state.admin_logged_in = False
+        st.sidebar.warning("🔒 Odjavljeni ste.")
+
 
 # -------------------- Hugging Face push --------------------
 def push_file_to_hf(local_path, commit_message="Update baza"):
@@ -223,113 +215,90 @@ def add_file_streamlit(uploaded_file):
     push_file_with_preview(tmp_path, commit_message=f"Add: {uploaded_file.name}")
     st.success(f"✅ Fajl '{uploaded_file.name}' dodat i poslat na Hugging Face")
 
-## -------------------- Admin UI --------------------
+# -------------------- ADMIN TABOVI --------------------
 if st.session_state.admin_logged_in:
     admin_tabs = st.tabs([
-        "📂 Inicijalizacija / Update baze",
         "🔍 Duplikati",
         "📄 Upload Excel",
-        "📊 Pregled fajlova"
+        "📊 Pregled učitanih fajlova"
     ])
 
-    # ================= TAB 1 =================
+    # ========== TAB 1: Duplikati ==========
     with admin_tabs[0]:
-        st.subheader("📂 Inicijalizacija / Update baze")
-        folder_path = st.text_input("Folder sa TXT fajlovima", value=DEFAULT_FOLDER)
-
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("🚀 Inicijalizuj bazu"):
-                st.info("⚡ Inicijalizacija će dodati fajlove iz foldera...")
-        with col2:
-            if st.button("🔄 Update baze"):
-                st.info("⚡ Update baze pokrenut...")
-
-        st.divider()
-        st.subheader("➕ Dodaj pojedinačni TXT fajl")
-        uploaded_file = st.file_uploader("Izaberite TXT fajl", type=["txt"])
-        if st.button("📥 Dodaj fajl"):
-            if uploaded_file is not None:
-                tmp_path = os.path.join(DEFAULT_FOLDER, uploaded_file.name)
-                with open(tmp_path, "wb") as f:
-                    f.write(uploaded_file.getbuffer())
-                st.success(f"✅ Fajl '{uploaded_file.name}' dodat u folder i spreman za obradu.")
-            else:
-                st.warning("⚠️ Niste izabrali fajl.")
-
-    # ================= TAB 2 =================
-    with admin_tabs[1]:
         st.subheader("🔍 Duplikati u tabeli kola")
         filter_godina = st.text_input("Godina (YYYY)", max_chars=4, key="dupl_godina")
         filter_mesec = st.text_input("Mesec (MM)", max_chars=2, key="dupl_mesec", help="Opcionalno")
 
-        def get_dupes_sql(godina, mesec=None):
+        def get_where_clause(godina, mesec=None):
             clause = f"WHERE SUBSTR(CAST(DatumVreme AS VARCHAR),1,4)='{godina}'"
             if mesec:
                 clause += f" AND SUBSTR(CAST(DatumVreme AS VARCHAR),5,2)='{mesec}'"
+            return clause
+
+        def get_dupes_sql(godina, mesec=None):
+            where_clause = get_where_clause(godina, mesec)
             sql = f"""
                 WITH dupl AS (
                     SELECT *,
-                        ROW_NUMBER() OVER (
-                            PARTITION BY "Režim","Vlasnik","Serija","Inv br","KB","Tip kola","Voz br",
-                                         "Stanica","Status","Roba","Rid","UN broj","Reon",
-                                         "tara","NetoTone","dužina vagona","broj osovina",
-                                         "Otp. država","Otp st","Uputna država","Up st","Broj kola",
-                                         "Redni broj kola"
-                            ORDER BY DatumVreme
-                        ) AS rn
+                           ROW_NUMBER() OVER (
+                               PARTITION BY "Režim","Vlasnik","Serija","Inv br","KB","Tip kola","Voz br",
+                                            "Stanica","Status","Roba","Rid","UN broj","Reon",
+                                            "tara","NetoTone","dužina vagona","broj osovina",
+                                            "Otp. država","Otp st","Uputna država","Up st","Broj kola",
+                                            "Redni broj kola"
+                               ORDER BY DatumVreme
+                           ) AS rn
                     FROM kola
-                    {clause}
+                    {where_clause}
                 )
                 SELECT *
                 FROM dupl
                 WHERE rn > 1
+                ORDER BY "Režim","Vlasnik","Serija","Inv br",DatumVreme
             """
             return sql
 
-        if st.button("🔍 Proveri duplikate"):
+        if st.button("🔍 Proveri duplikate", key="btn_proveri_dupl"):
             if not filter_godina:
                 st.warning("⚠️ Unesite godinu.")
             else:
-                dupes = run_sql(get_dupes_sql(filter_godina, filter_mesec))
+                dupes = con.execute(get_dupes_sql(filter_godina, filter_mesec)).fetchdf()
                 if dupes.empty:
                     st.success("✅ Duplikata nema")
                 else:
                     st.warning(f"⚠️ Pronađeno {len(dupes)} duplikata!")
                     st.dataframe(dupes, use_container_width=True)
 
-    # ================= TAB 3 =================
-    with admin_tabs[2]:
+    # ========== TAB 2: Upload Excel ==========
+    with admin_tabs[1]:
         st.subheader("📄 Upload Excel tabele")
         uploaded_excel = st.file_uploader("Izaberi Excel fajl", type=["xlsx"], key="excel_upload")
-        if st.button("⬆️ Upload / Update Excel"):
-            if uploaded_excel:
-                df_excel = pd.read_excel(uploaded_excel)
-                ime_tabele = uploaded_excel.name.rsplit(".",1)[0]
-                tables = [t[0] for t in con.execute("SHOW TABLES").fetchall()]
-                if ime_tabele in tables:
-                    con.execute(f'DROP TABLE IF EXISTS "{ime_tabele}"')
-                con.register("df_excel", df_excel)
-                con.execute(f'CREATE TABLE "{ime_tabele}" AS SELECT * FROM df_excel')
-                con.unregister("df_excel")
-                st.success(f"✅ Tabela '{ime_tabele}' kreirana / ažurirana ({len(df_excel)} redova).")
+        if st.button("⬆️ Upload / Update Excel tabele"):
+            if uploaded_excel is not None:
+                try:
+                    df_excel = pd.read_excel(uploaded_excel)
+                    st.success(f"✅ Excel fajl učitan ({len(df_excel)} redova).")
+                except Exception as e:
+                    st.error(f"❌ Greška pri učitavanju Excel-a: {e}")
+            else:
+                st.warning("⚠️ Niste izabrali Excel fajl.")
 
-    # ================= TAB 4 =================
-    with admin_tabs[3]:
-        st.subheader("📊 Pregled učitanih fajlova")
+    # ========== TAB 3: Pregled učitanih fajlova ==========
+    with admin_tabs[2]:
+        st.subheader("📊 Pregled fajlova iz baze")
         try:
-            df_by_file = run_sql(
-                f'''
+            df_by_file = con.execute(
+                '''
                 SELECT source_file, COUNT(*) AS broj
-                FROM "{TABLE_NAME}"
+                FROM kola
                 GROUP BY source_file
                 ORDER BY broj DESC
                 LIMIT 20
                 '''
-            )
+            ).fetchdf()
             st.dataframe(df_by_file, use_container_width=True)
         except Exception as e:
-            st.warning(f"❌ Ne mogu da pročitam bazu: {e}")
+            st.warning(f"⚠️ Ne mogu da pročitam bazu: {e}")
 
 tab_buttons = [
     "📊 Pregled",
