@@ -48,7 +48,17 @@ def get_duckdb_connection(db_file=DB_FILE):
 
 # Kreiraj konekciju
 con = get_duckdb_connection()
+# --- Jednokratno dodavanje kolone broj_clean ---
+try:
+    con.execute("ALTER TABLE kola ADD COLUMN broj_clean BIGINT")
+except Exception:
+    # kolona već postoji
+    pass
 
+con.execute("""
+UPDATE kola
+SET broj_clean = TRY_CAST(SUBSTR("Broj kola", 3, LENGTH("Broj kola") - 2) AS BIGINT)
+""")
 # Definicija helper funkcije
 @st.cache_data
 def run_sql(sql: str) -> pd.DataFrame:
