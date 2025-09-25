@@ -7,5 +7,8 @@ requests
 gdown
 pydrive2
 huggingface-hub
+pyarrow
 streamlit-option-menu
-st-aggrid
+streamlit-aggrid
+
+
