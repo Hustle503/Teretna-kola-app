@@ -310,111 +310,61 @@ if selected_tab == "📊 Pregled":
     except Exception as e:
         st.error(f"Greška pri čitanju baze: {e}")
 
-
-import pandas as pd
-import polars as pl
-import streamlit as st
-import io
-
-# ---------- Funkcije za stanice ----------
-stanice_df = pd.read_excel("stanice.xlsx")
-stanice_df["sifra"] = stanice_df["sifra"].astype(str).str.strip().str.lstrip("0")
-stanice_map = dict(zip(stanice_df["sifra"], stanice_df["naziv"]))
-
-def add_station_names(df):
-    if "Stanica" in df.columns:
-        df["Stanica"] = df["Stanica"].astype(str).str.strip()
-        df.insert(df.columns.get_loc("Stanica")+1, "Naziv st.", df["Stanica"].map(stanice_map))
-    if "Otp st" in df.columns and "Otp. država" in df.columns:
-        df["Otp st"] = df["Otp st"].astype(str).str.strip().str.lstrip("0")
-        df["Otp. država"] = df["Otp. država"].astype(str).str.strip().str.replace(".0","").str.lstrip("0")
-        df.insert(df.columns.get_loc("Otp st")+1, "Naziv otp st.", 
-                  df.apply(lambda row: stanice_map.get(str(row["Otp st"])) if row["Otp. država"]=="72" else None, axis=1))
-    if "Up st" in df.columns and "Uputna država" in df.columns:
-        df["Up st"] = df["Up st"].astype(str).str.strip().str.lstrip("0")
-        df["Uputna država"] = df["Uputna država"].astype(str).str.strip().str.replace(".0","").str.lstrip("0")
-        df.insert(df.columns.get_loc("Up st")+1, "Naziv up st",
-                  df.apply(lambda row: stanice_map.get(str(row["Up st"])) if row["Uputna država"]=="72" else None, axis=1))
-    return df
-
-def format_numeric(df):
-    for col in ["tara","NetoTone","dužina vagona"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-            df[col] = df[col].apply(lambda x: x/10 if pd.notnull(x) and x>100 else x)
-            df[col] = df[col].apply(lambda x: f"{x:.1f}".replace(".",",") if pd.notnull(x) else None)
-    return df
-
-# ---------- Funkcija za brzi SQL upit ----------
-def get_last_state_fast(con):
-    sql = """
-    WITH kola_clean AS (
-        SELECT *,
-               TRY_CAST(SUBSTR("Broj kola", 3, 9) AS BIGINT) AS broj_clean
-        FROM kola
-    ),
-    poslednje AS (
-        SELECT s."Broj kola" AS broj_kola,
-               k.*,
-               ROW_NUMBER() OVER (PARTITION BY s."Broj kola" ORDER BY k."DatumVreme" DESC) AS rn
-        FROM stanje s
-        LEFT JOIN kola_clean k
-          ON TRY_CAST(s."Broj kola" AS BIGINT) = k.broj_clean
-    )
-    SELECT *
-    FROM poslednje
-    WHERE rn = 1
+def get_last_state_by_year_chunks(con, batch_size=1000):
     """
-    return con.execute(sql).fetchdf()
+    - Obrađuje kola po periodima od po godinu dana unazad
+    - Spaja sa 'stanje' batch-evima
+    """
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=365)  # period od godinu dana
+    total_stanje = con.execute("SELECT COUNT(*) FROM stanje").fetchone()[0]
+    df_result = []
+    progress = st.progress(0)
 
-# ---------- Funkcija za dodavanje naziva stanica ----------
-def add_station_names(df, stanice_map):
-    if "Stanica" in df.columns:
-        df["Stanica"] = df["Stanica"].astype(str).str.strip()
-        df.insert(df.columns.get_loc("Stanica")+1, "Naziv st.", df["Stanica"].map(stanice_map))
-    return df
+    # Batch kroz 'stanje'
+    for offset in range(0, total_stanje, batch_size):
+        df_batch = con.execute(f"""
+            SELECT *
+            FROM stanje
+            ORDER BY "Broj kola"
+            LIMIT {batch_size} OFFSET {offset}
+        """).fetchdf()
 
-# ---------- Funkcija za formatiranje numeričkih kolona ----------
-def format_numeric(df):
-    for col in ["tara","NetoTone","dužina vagona"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-            df[col] = df[col].apply(lambda x: x/10 if pd.notnull(x) and x>100 else x)
-            df[col] = df[col].apply(lambda x: f"{x:.1f}".replace(".", ",") if pd.notnull(x) else None)
-    return df
+        if df_batch.empty:
+            continue
 
-# ---------- Streamlit tab ----------
-if selected_tab == "📌 Poslednje stanje kola":
-    st.subheader("📌 Poslednje stanje kola")
+        df_batch_merged = pd.DataFrame()
 
-    if st.button("🔎 Prikaži poslednje stanje kola", key="btn_last_state"):
-        try:
-            # --- Brzi SQL upit ---
-            df_last = get_last_state_fast(con)
-            
-            # --- Dodaj nazive stanica ---
-            df_last = add_station_names(df_last, stanice_map)
-            
-            # --- Formatiraj numeričke kolone ---
-            df_last = format_numeric(df_last)
-            
-            st.success(f"✅ Pronađeno {len(df_last)} poslednjih unosa za kola iz Excel tabele.")
-            st.dataframe(df_last, use_container_width=True)
-            
-            # --- Export Excel ---
-            import io
-            excel_buffer = io.BytesIO()
-            with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
-                df_last.to_excel(writer, index=False, sheet_name="Poslednje stanje")
-            st.download_button(
-                "⬇️ Preuzmi kao Excel",
-                data=excel_buffer.getvalue(),
-                file_name="poslednje_stanje.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-            
-        except Exception as e:
-            st.error(f"❌ Greška u procesu: {e}")
+        # Obrada po godinama unazad dok ima kola bez podataka
+        remaining = df_batch.copy()
+        while not remaining.empty:
+            date_str = start_date.strftime("%Y-%m-%d")
+            df_kola_period = con.execute(f"""
+                SELECT *,
+                       TRY_CAST(SUBSTR("Broj kola", 3, 9) AS BIGINT) AS broj_clean
+                FROM kola
+                WHERE "DatumVreme" BETWEEN '{date_str}' AND '{end_date.strftime("%Y-%m-%d")}'
+            """).fetchdf()
+
+            merged = remaining.merge(df_kola_period, left_on="Broj kola", right_on="broj_clean", how="left")
+
+            # Uzmi one koji nisu pronađeni za sledeći period
+            remaining = merged[merged['broj_clean'].isna()][["Broj kola"]].copy()
+            remaining = remaining.merge(df_batch, on="Broj kola", how="left")
+
+            df_batch_merged = pd.concat([df_batch_merged, merged[merged['broj_clean'].notna()]], ignore_index=True)
+
+            # Pomeramo period unazad za godinu dana
+            end_date = start_date
+            start_date = end_date - timedelta(days=365)
+
+        # Uzmi poslednji po DatumVreme
+        df_batch_merged = df_batch_merged.sort_values("DatumVreme", ascending=False).drop_duplicates(subset=["Broj kola"])
+        df_result.append(df_batch_merged)
+        progress.progress(min((offset + batch_size) / total_stanje, 1.0))
+
+    df_final = pd.concat(df_result, ignore_index=True)
+    return df_final
 
 
 # ---------- Tab 3: SQL upiti ----------
