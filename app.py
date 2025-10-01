@@ -25,35 +25,40 @@ ADMIN_PASS = "tajna123"
 # Folder za privremene fajlove
 DEFAULT_FOLDER = "/tmp"
 STATE_FILE = os.path.join(DEFAULT_FOLDER, "processed_files.json")
-TABLE_NAME = "kola"
 
-# -------------------- HF PREUZIMANJE BAZE --------------------
+# -------------------- HF PREUZIMANJE PARQUET FAJLOVA --------------------
 @st.cache_data(show_spinner=True)
-def get_db_file():
-    db_path = hf_hub_download(
+def get_parquet_file(filename: str) -> str:
+    path = hf_hub_download(
         repo_id=HF_REPO,
-        filename="kola_sk.db",
+        filename=filename,
         repo_type="dataset",
         token=HF_TOKEN
     )
-    return db_path
+    return path
 
-DB_FILE = get_db_file()
+# Primer fajlova koje sada imamo
+PARQUET_FILES = ["kola.parquet", "rastojanja.parquet", "stanice.parquet",
+                 "stanje.parquet", "stanje_SK.parquet"]
 
-# -------------------- DUCKDB --------------------
+# -------------------- DUCKDB KONEKCIJA SA PARQUETOM --------------------
 @st.cache_resource
-def get_duckdb_connection(db_file=DB_FILE):
-    # DuckDB read-only konekcija
-    return duckdb.connect(database=db_file, read_only=True)
+def get_duckdb_connection(parquet_files=PARQUET_FILES):
+    con = duckdb.connect(database=":memory:")  # memory DB
+    for f in parquet_files:
+        path = get_parquet_file(f)
+        table_name = os.path.splitext(os.path.basename(f))[0]
+        # Kreira tabelu u DuckDB iz Parquet fajla
+        con.execute(f"CREATE VIEW {table_name} AS SELECT * FROM '{path}'")
+    return con
 
 # Kreiraj konekciju
 con = get_duckdb_connection()
 
-# Definicija helper funkcije
+# -------------------- SQL HELPER --------------------
 @st.cache_data
 def run_sql(sql: str) -> pd.DataFrame:
     return con.execute(sql).fetchdf()
-
 
 
 # -------------------- ADMIN LOGIN --------------------
