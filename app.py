@@ -22,6 +22,27 @@ ADMIN_PASS = st.secrets.get("ADMIN_PASS", "tajna123")
 DEFAULT_FOLDER = "/tmp"
 TABLE_NAME = "kola"
 
+def get_last_state_sql(con):
+    sql = """
+    WITH kola_clean AS (
+        SELECT *,
+               TRY_CAST(SUBSTR("Broj kola", 3) AS BIGINT) AS broj_clean
+        FROM kola
+    ),
+    poslednje AS (
+        SELECT s."Broj kola" AS broj_kola,
+               k.*,
+               ROW_NUMBER() OVER (PARTITION BY s."Broj kola" ORDER BY k."DatumVreme" DESC) AS rn
+        FROM stanje s
+        LEFT JOIN kola_clean k
+        ON TRY_CAST(s."Broj kola" AS BIGINT) = k.broj_clean
+    )
+    SELECT *
+    FROM poslednje
+    WHERE rn = 1
+    """
+    return con.execute(sql).fetchdf()
+
 # -------------------- HF PREUZIMANJE PARQUET --------------------
 @st.cache_data(show_spinner=True)
 def get_parquet_file(filename: str) -> str:
