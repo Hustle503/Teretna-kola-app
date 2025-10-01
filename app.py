@@ -11,22 +11,18 @@ from datetime import date
 from huggingface_hub import hf_hub_download, Repository, HfApi
 
 
+
 # -------------------- CONFIG --------------------
 st.set_page_config(layout="wide")
 st.title("🚂 Teretna kola SK")
 
-# HF token i repo
 HF_TOKEN = st.secrets["HF_TOKEN"]
 HF_REPO = st.secrets["HF_REPO"]
-
-# Admin lozinka
-ADMIN_PASS = "tajna123"
-
-# Folder za privremene fajlove
+ADMIN_PASS = st.secrets.get("ADMIN_PASS", "tajna123")
 DEFAULT_FOLDER = "/tmp"
-STATE_FILE = os.path.join(DEFAULT_FOLDER, "processed_files.json")
+TABLE_NAME = "kola"
 
-# -------------------- HF PREUZIMANJE PARQUET FAJLOVA --------------------
+# -------------------- HF PREUZIMANJE PARQUET --------------------
 @st.cache_data(show_spinner=True)
 def get_parquet_file(filename: str) -> str:
     path = hf_hub_download(
@@ -37,29 +33,26 @@ def get_parquet_file(filename: str) -> str:
     )
     return path
 
-# Primer fajlova koje sada imamo
-PARQUET_FILES = ["kola.parquet", "rastojanja.parquet", "stanice.parquet",
-                 "stanje.parquet", "stanje_SK.parquet"]
-
-# -------------------- DUCKDB KONEKCIJA SA PARQUETOM --------------------
+# -------------------- DUCKDB KONEKCIJA --------------------
 @st.cache_resource
-def get_duckdb_connection(parquet_files=PARQUET_FILES):
-    con = duckdb.connect(database=":memory:")  # memory DB
+def get_duckdb_connection(parquet_files: list):
+    con = duckdb.connect(database=":memory:")
     for f in parquet_files:
         path = get_parquet_file(f)
         table_name = os.path.splitext(os.path.basename(f))[0]
-        # Kreira tabelu u DuckDB iz Parquet fajla
         con.execute(f"CREATE VIEW {table_name} AS SELECT * FROM '{path}'")
     return con
 
-# Kreiraj konekciju
-con = get_duckdb_connection()
+# -------------------- INIT DB IZ PARQUET --------------------
+PARQUET_FILES = ["kola.parquet", "rastojanja.parquet", "stanice.parquet",
+                 "stanje.parquet", "stanje_SK.parquet"]
+
+con = get_duckdb_connection(PARQUET_FILES)
 
 # -------------------- SQL HELPER --------------------
 @st.cache_data
 def run_sql(sql: str) -> pd.DataFrame:
     return con.execute(sql).fetchdf()
-
 
 # -------------------- ADMIN LOGIN --------------------
 if "admin_logged_in" not in st.session_state:
@@ -116,45 +109,56 @@ def parse_txt(path) -> pl.DataFrame:
     ])
     return df
 
-# -------------------- INIT DATABASE --------------------
-def init_database(folder: str):
-    files = [f for f in os.listdir(folder) if f.endswith(".txt")]
-    if not files:
-        st.warning(f"⚠️ Nema txt fajlova u folderu: {folder}")
-        return
-    all_dfs = [parse_txt(os.path.join(folder, f)) for f in files]
-    df = pl.concat(all_dfs)
-    df = df.with_columns(pl.arange(0, df.height).alias("id"))
-    con.execute(f"DROP TABLE IF EXISTS {TABLE_NAME}")
-    con.register("df", df)
-    con.execute(f"CREATE TABLE {TABLE_NAME} AS SELECT * FROM df")
-    con.unregister("df")
-    st.success(f"✅ Inicijalno učitano {len(df)} redova iz {len(files)} fajlova")
-
-# -------------------- UPLOAD FILE STREAMLIT --------------------
+# -------------------- UPLOAD FILE STREAMLIT (TXT I EXCEL) --------------------
 def add_file_streamlit(uploaded_file):
     tmp_path = os.path.join(DEFAULT_FOLDER, uploaded_file.name)
     with open(tmp_path, "wb") as f:
         f.write(uploaded_file.getbuffer())
-    df_new = parse_txt(tmp_path)
-    max_id = con.execute(f"SELECT MAX(id) FROM {TABLE_NAME}").fetchone()[0] or 0
+
+    # Odredi tip fajla
+    ext = os.path.splitext(uploaded_file.name)[1].lower()
+    if ext == ".txt":
+        df_new = parse_txt(tmp_path)
+    elif ext == ".xlsx":
+        df_new = pl.from_pandas(pd.read_excel(tmp_path))
+    else:
+        st.error("❌ Nepoznat tip fajla.")
+        return
+
+    # Dodaj ID kolonu
+    try:
+        max_id = con.execute(f"SELECT MAX(id) FROM {TABLE_NAME}").fetchone()[0] or 0
+    except:
+        max_id = 0
     df_new = df_new.with_columns(pl.arange(max_id+1,max_id+1+df_new.height).alias("id"))
-    existing_cols = [c[1] for c in con.execute(f"PRAGMA table_info({TABLE_NAME})").fetchall()]
+
+    # Sinkronizuj kolone
+    try:
+        existing_cols = [c[1] for c in con.execute(f"PRAGMA table_info({TABLE_NAME})").fetchall()]
+    except:
+        existing_cols = df_new.columns
     for col in existing_cols:
         if col not in df_new.columns:
             df_new = df_new.with_columns(pl.lit(None).alias(col))
     df_new = df_new.select(existing_cols)
+
+    # Registruj i insert
     con.register("df_new", df_new)
     con.execute(f"INSERT INTO {TABLE_NAME} SELECT * FROM df_new")
     con.unregister("df_new")
-    push_file_to_hf(tmp_path)
+
+    # Push na HF kao Parquet
+    parquet_path = tmp_path.replace(ext, ".parquet")
+    df_new.to_parquet(parquet_path)
+    push_file_to_hf(parquet_path)
+
     st.success(f"✅ Fajl '{uploaded_file.name}' dodat i poslat na Hugging Face")
 
 # -------------------- ADMIN TABOVI --------------------
 if st.session_state.admin_logged_in:
     admin_tabs = st.tabs([
         "🔍 Duplikati",
-        "📄 Upload Excel",
+        "📄 Upload fajlova",
         "📊 Pregled učitanih fajlova"
     ])
 
@@ -162,7 +166,7 @@ if st.session_state.admin_logged_in:
     with admin_tabs[0]:
         st.subheader("🔍 Duplikati u tabeli kola")
         filter_godina = st.text_input("Godina (YYYY)", max_chars=4, key="dupl_godina")
-        filter_mesec = st.text_input("Mesec (MM)", max_chars=2, key="dupl_mesec", help="Opcionalno")
+        filter_mesec = st.text_input("Mesec (MM)", max_chars=2, key="dupl_mesec")
 
         def get_where_clause(godina, mesec=None):
             clause = f"WHERE SUBSTR(CAST(DatumVreme AS VARCHAR),1,4)='{godina}'"
@@ -197,32 +201,28 @@ if st.session_state.admin_logged_in:
             if not filter_godina:
                 st.warning("⚠️ Unesite godinu.")
             else:
-                dupes = con.execute(get_dupes_sql(filter_godina, filter_mesec)).fetchdf()
+                dupes = run_sql(get_dupes_sql(filter_godina, filter_mesec))
                 if dupes.empty:
                     st.success("✅ Duplikata nema")
                 else:
                     st.warning(f"⚠️ Pronađeno {len(dupes)} duplikata!")
                     st.dataframe(dupes, use_container_width=True)
 
-    # ========== TAB 2: Upload Excel ==========
+    # ========== TAB 2: Upload fajlova ==========
     with admin_tabs[1]:
-        st.subheader("📄 Upload Excel tabele")
-        uploaded_excel = st.file_uploader("Izaberi Excel fajl", type=["xlsx"], key="excel_upload")
-        if st.button("⬆️ Upload / Update Excel tabele"):
-            if uploaded_excel is not None:
-                try:
-                    df_excel = pd.read_excel(uploaded_excel)
-                    st.success(f"✅ Excel fajl učitan ({len(df_excel)} redova).")
-                except Exception as e:
-                    st.error(f"❌ Greška pri učitavanju Excel-a: {e}")
+        st.subheader("📄 Upload TXT / Excel fajlova")
+        uploaded_file = st.file_uploader("Izaberi fajl", type=["txt","xlsx"], key="file_upload")
+        if st.button("⬆️ Upload / Update fajl"):
+            if uploaded_file is not None:
+                add_file_streamlit(uploaded_file)
             else:
-                st.warning("⚠️ Niste izabrali Excel fajl.")
+                st.warning("⚠️ Niste izabrali fajl.")
 
     # ========== TAB 3: Pregled učitanih fajlova ==========
     with admin_tabs[2]:
         st.subheader("📊 Pregled fajlova iz baze")
         try:
-            df_by_file = con.execute(
+            df_by_file = run_sql(
                 '''
                 SELECT source_file, COUNT(*) AS broj
                 FROM kola
@@ -230,11 +230,10 @@ if st.session_state.admin_logged_in:
                 ORDER BY broj DESC
                 LIMIT 20
                 '''
-            ).fetchdf()
+            )
             st.dataframe(df_by_file, use_container_width=True)
         except Exception as e:
             st.warning(f"⚠️ Ne mogu da pročitam bazu: {e}")
-
 tab_buttons = [
     "📊 Pregled",
     "📌 Poslednje stanje kola",
