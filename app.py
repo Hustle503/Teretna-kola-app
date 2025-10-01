@@ -350,7 +350,7 @@ def get_last_state_fast(con):
     sql = """
     WITH kola_clean AS (
         SELECT *,
-               TRY_CAST(SUBSTR("Broj kola", 3) AS BIGINT) AS broj_clean
+               TRY_CAST(SUBSTR("Broj kola", 3, 9) AS BIGINT) AS broj_clean
         FROM kola
     ),
     poslednje AS (
