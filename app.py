@@ -345,52 +345,64 @@ def format_numeric(df):
             df[col] = df[col].apply(lambda x: f"{x:.1f}".replace(".",",") if pd.notnull(x) else None)
     return df
 
-# ---------- Funkcija za batch processing ----------
-def get_last_state(con, batch_size=100):
-    # Učitavamo kola i dodajemo broj_clean
-    df_kola = pd.DataFrame(con.execute("""
-        SELECT *, TRY_CAST(SUBSTRING("Broj kola" FROM 3) AS BIGINT) AS broj_clean
+# ---------- Funkcija za brzi SQL upit ----------
+def get_last_state_fast(con):
+    sql = """
+    WITH kola_clean AS (
+        SELECT *,
+               TRY_CAST(SUBSTR("Broj kola", 3) AS BIGINT) AS broj_clean
         FROM kola
-    """).fetchall(), columns=[desc[0] for desc in con.execute("PRAGMA table_info(kola)").fetchall()])
-    
-    df_stanje = pd.DataFrame(con.execute("SELECT * FROM stanje").fetchall(), 
-                             columns=[desc[0] for desc in con.execute("PRAGMA table_info(stanje)").fetchall()])
-    
-    df_result = []
-    total = len(df_stanje)
-    
-    progress = st.progress(0)
-    
-    for i in range(0, total, batch_size):
-        batch = df_stanje.iloc[i:i+batch_size].copy()
-        # LEFT JOIN po broj_clean
-        batch_merged = batch.merge(df_kola, left_on="Broj kola", right_on="broj_clean", how="left")
-        # Uzmi poslednji po DatumVreme
-        batch_merged = batch_merged.sort_values("DatumVreme", ascending=False).drop_duplicates(subset=["Broj kola"])
-        df_result.append(batch_merged)
-        progress.progress(min((i+batch_size)/total,1.0))
-    
-    df_final = pd.concat(df_result, ignore_index=True)
-    return df_final
+    ),
+    poslednje AS (
+        SELECT s."Broj kola" AS broj_kola,
+               k.*,
+               ROW_NUMBER() OVER (PARTITION BY s."Broj kola" ORDER BY k."DatumVreme" DESC) AS rn
+        FROM stanje s
+        LEFT JOIN kola_clean k
+          ON TRY_CAST(s."Broj kola" AS BIGINT) = k.broj_clean
+    )
+    SELECT *
+    FROM poslednje
+    WHERE rn = 1
+    """
+    return con.execute(sql).fetchdf()
 
+# ---------- Funkcija za dodavanje naziva stanica ----------
+def add_station_names(df, stanice_map):
+    if "Stanica" in df.columns:
+        df["Stanica"] = df["Stanica"].astype(str).str.strip()
+        df.insert(df.columns.get_loc("Stanica")+1, "Naziv st.", df["Stanica"].map(stanice_map))
+    return df
+
+# ---------- Funkcija za formatiranje numeričkih kolona ----------
+def format_numeric(df):
+    for col in ["tara","NetoTone","dužina vagona"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+            df[col] = df[col].apply(lambda x: x/10 if pd.notnull(x) and x>100 else x)
+            df[col] = df[col].apply(lambda x: f"{x:.1f}".replace(".", ",") if pd.notnull(x) else None)
+    return df
+
+# ---------- Streamlit tab ----------
 if selected_tab == "📌 Poslednje stanje kola":
     st.subheader("📌 Poslednje stanje kola")
-    
+
     if st.button("🔎 Prikaži poslednje stanje kola", key="btn_last_state"):
         try:
-            # --- SQL verzija, brže ---
-            df_last = get_last_state_sql(con)
+            # --- Brzi SQL upit ---
+            df_last = get_last_state_fast(con)
             
-            # Dodaj nazive stanica
-            df_last = add_station_names(df_last)
+            # --- Dodaj nazive stanica ---
+            df_last = add_station_names(df_last, stanice_map)
             
-            # Formatiraj numeričke kolone
+            # --- Formatiraj numeričke kolone ---
             df_last = format_numeric(df_last)
             
             st.success(f"✅ Pronađeno {len(df_last)} poslednjih unosa za kola iz Excel tabele.")
             st.dataframe(df_last, use_container_width=True)
             
-            # Eksport Excel
+            # --- Export Excel ---
+            import io
             excel_buffer = io.BytesIO()
             with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
                 df_last.to_excel(writer, index=False, sheet_name="Poslednje stanje")
@@ -400,8 +412,10 @@ if selected_tab == "📌 Poslednje stanje kola":
                 file_name="poslednje_stanje.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+            
         except Exception as e:
-            st.error(f"Greška u procesu: {e}")
+            st.error(f"❌ Greška u procesu: {e}")
+
 
 # ---------- Tab 3: SQL upiti ----------
 if selected_tab == "🔎 SQL upiti":
