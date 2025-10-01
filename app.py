@@ -352,13 +352,13 @@ def get_last_state(con, batch_size=100):
     df_final = pd.concat(df_result, ignore_index=True)
     return df_final
 
-# ---------- Streamlit tab ----------
 if selected_tab == "📌 Poslednje stanje kola":
     st.subheader("📌 Poslednje stanje kola")
     
     if st.button("🔎 Prikaži poslednje stanje kola", key="btn_last_state"):
         try:
-            df_last = get_last_state(con, batch_size=100)
+            # --- SQL verzija, brže ---
+            df_last = get_last_state_sql(con)
             
             # Dodaj nazive stanica
             df_last = add_station_names(df_last)
