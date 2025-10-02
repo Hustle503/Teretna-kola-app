@@ -852,7 +852,7 @@ if selected_tab == "📌 Kola u inostranstvu":
             FROM "Stanje SK" s
             LEFT JOIN poslednje_stanje_kola k
                ON TRY_CAST(s."Broj kola" AS BIGINT) = TRY_CAST(k."Broj vagona" AS BIGINT)
-            WHERE k."Status" IN (21, 24);
+            WHERE k."Status" IN (21, 24)
         """
 
         try:
