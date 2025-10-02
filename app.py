@@ -672,12 +672,12 @@ if selected_tab == "📌 Poslednje stanje kola":
         q_last = """
         SELECT 
             s."Broj kola" AS broj_stanje,
-            k."Broj vagona",
+            k."Broj kola",
             k.*
         FROM stanje s
         LEFT JOIN (
             SELECT 
-                TRY_CAST(SUBSTR("Broj kola", (3, 9)) AS BIGINT) AS broj_clean,
+                TRY_CAST(SUBSTR("Broj kola", 3, LENGTH("Broj kola") - 3) AS BIGINT) AS broj_clean,
                 kola.*
             FROM kola
         ) k
