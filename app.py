@@ -722,7 +722,6 @@ if selected_tab == "🔎 SQL upiti":
     run_btn = colx.button("▶️ Izvrši upit")
 
     def is_modifying_query(sql: str):
-        """Proverava da li upit menja bazu"""
         keywords = ["INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "TRUNCATE"]
         sql_upper = sql.strip().upper()
         return any(k in sql_upper for k in keywords)
