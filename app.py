@@ -397,28 +397,17 @@ def add_txt_file_streamlit(uploaded_file, TABLE_NAME: str = TABLE_NAME):
     """)
 
     st.success(f"✅ Fajl '{uploaded_file.name}' dodat u bazu ({len(df_new)} redova)")
-    st.success(f"✅ Fajl '{uploaded_file.name}' dodat u bazu ({len(df_new)} redova)")
-# ---------- Streamlit UI ----------
-import streamlit as st
-import pandas as pd
+ 
 
-# -------------------- KONFIG --------------------
-st.set_page_config(layout="wide")
-st.title("🚂 Teretna kola SK")
-
-ADMIN_PASS = "tajna123"
-DEFAULT_FOLDER = r"C:\Teretna kola"
-TABLE_NAME = "kola"
-
+# -------------------- ADMIN LOGIN --------------------
 if "admin_logged_in" not in st.session_state:
     st.session_state.admin_logged_in = False
 
-# -------------------- SIDEBAR LOGIN --------------------
 st.sidebar.title("⚙️ Podešavanja")
 
 if not st.session_state.admin_logged_in:
-    password = st.sidebar.text_input("🔑 Unesi lozinku:", type="password")
-    if st.sidebar.button("🔓 Otključaj"):
+    password = st.sidebar.text_input("🔑 Unesi lozinku:", type="password", key="admin_password")
+    if st.sidebar.button("🔓 Otključaj", key="unlock_btn"):
         if password == ADMIN_PASS:
             st.session_state.admin_logged_in = True
             st.sidebar.success("✅ Uspešno ste se prijavili!")
@@ -426,10 +415,9 @@ if not st.session_state.admin_logged_in:
             st.sidebar.error("❌ Pogrešna lozinka.")
     st.sidebar.warning("🔒 Podešavanja su zaključana.")
 else:
-    if st.sidebar.button("🚪 Odjavi se"):
+    if st.sidebar.button("🚪 Odjavi se", key="logout_btn"):
         st.session_state.admin_logged_in = False
         st.sidebar.warning("🔒 Odjavljeni ste.")
-
 # -------------------- AKO JE ADMIN ULOGOVAN --------------------
 if st.session_state.admin_logged_in:
     admin_tabs = st.tabs([
