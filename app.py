@@ -670,24 +670,24 @@ if selected_tab == "📌 Poslednje stanje kola":
     # 🔹 Učitaj uvek sveže stanje iz DuckDB (osvežava se posle ubacivanja novih fajlova)
     try:
         q_last = """
-        SELECT 
-            s."Broj kola" AS broj_stanje,
-            k."Broj kola",
-            k.*
-        FROM stanje s
-        LEFT JOIN (
+        WITH kola_clean AS (
             SELECT 
-                TRY_CAST(SUBSTR("Broj kola", 3, LENGTH("Broj kola") - 3) AS BIGINT) AS broj_clean,
-                kola.*
+                *,
+                TRY_CAST(SUBSTR("Broj kola", 3, LENGTH("Broj kola") - 3) AS BIGINT) AS broj_clean
             FROM kola
-        ) k
-          ON TRY_CAST(s."Broj kola" AS BIGINT) = k.broj_clean
-        QUALIFY ROW_NUMBER() OVER (
-            PARTITION BY s."Broj kola"
-            ORDER BY k."DatumVreme" DESC
-        ) = 1
-        """
-        df_last = run_sql(q_last)
+        ),
+        poslednje AS (
+            SELECT DISTINCT ON (s."Broj kola")
+                s."Broj kola" AS broj_kola,
+                k.*
+            FROM stanje s
+            LEFT JOIN kola_clean k
+            ON TRY_CAST(s."Broj kola" AS BIGINT) = k.broj_clean
+            ORDER BY s."Broj kola", k."DatumVreme" DESC
+        )
+        SELECT *
+        FROM poslednje;
+         df_last = run_sql(q_last)
 
         # 🔹 Sačuvaj i u sesiju i u DuckDB
         st.session_state.df_last = df_last
