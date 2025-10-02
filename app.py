@@ -825,9 +825,7 @@ if selected_tab == "🔬 Pregled podataka":
             st.error(f"Greška pri čitanju: {e}")
     else:
         st.info("👉 Izaberi bar jednu kolonu za prikaz")
-
 # ---------- Tab 5: Kola u inostranstvu ----------
-# 📌 Kola u inostranstvu
 if selected_tab == "📌 Kola u inostranstvu":
     st.subheader("🌍 Kola u inostranstvu")
 
@@ -842,17 +840,24 @@ if selected_tab == "📌 Kola u inostranstvu":
     if prikaz_tip == "Samo poslednje stanje":
         q_last = """
         WITH poslednje_stanje_kola AS (
-                SELECT DISTINCT ON ("Broj kola")
-                    k.*
+            SELECT *
+            FROM (
+                SELECT 
+                    k.*,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY "Broj kola"
+                        ORDER BY "DatumVreme" DESC
+                    ) AS rn
                 FROM kola k
-                ORDER BY "Broj kola", "DatumVreme" DESC
-            )
-            SELECT s."Broj kola" AS broj_stanje,
-                    k.*
-            FROM "Stanje SK" s
-            LEFT JOIN poslednje_stanje_kola k
-               ON TRY_CAST(s."Broj kola" AS BIGINT) = TRY_CAST(k."Broj vagona" AS BIGINT)
-            WHERE k."Status" IN (21, 24)
+            ) t
+            WHERE rn = 1
+        )
+        SELECT s."Broj kola" AS broj_stanje,
+               k.*
+        FROM "Stanje SK" s
+        LEFT JOIN poslednje_stanje_kola k
+          ON TRY_CAST(s."Broj kola" AS BIGINT) = TRY_CAST(k."Broj vagona" AS BIGINT)
+        WHERE k."Status" IN (21, 24)
         """
 
         try:
