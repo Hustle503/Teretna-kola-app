@@ -839,7 +839,7 @@ if selected_tab == "📌 Kola u inostranstvu":
 
     if prikaz_tip == "Samo poslednje stanje":
         q_last = """
-        WITH poslednje_stanje_kola AS (
+        WITH "poslednje stanje kola" AS (
             SELECT *
             FROM (
                 SELECT 
