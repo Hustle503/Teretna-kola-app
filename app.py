@@ -677,7 +677,7 @@ if selected_tab == "📌 Poslednje stanje kola":
         FROM stanje s
         LEFT JOIN (
             SELECT 
-                TRY_CAST("Broj vagona" AS BIGINT) AS broj_clean,
+                TRY_CAST(SUBSTR("Broj kola", (3, 9)) AS BIGINT) AS broj_clean,
                 kola.*
             FROM kola
         ) k
