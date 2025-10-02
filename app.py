@@ -168,7 +168,8 @@ def init_database(folder: str, table_name: str = TABLE_NAME):
     parquet_list = "','".join(tmp_parquets)
     con.execute(f"DROP TABLE IF EXISTS {table_name}")
     # DuckDB direct read
-    con.execute(f"CREATE TABLE {table_name} AS SELECT * FROM read_parquet(['{\"','\".join(tmp_parquets)}'])")
+    parquet_list_str = "[" + ",".join([f"'{p}'" for p in tmp_parquets]) + "]"
+    con.execute(f"CREATE TABLE {table_name} AS SELECT * FROM read_parquet({parquet_list_str})")
     # Dodaj ID_rb kolonu
     con.execute(f"""
         CREATE OR REPLACE TABLE {table_name} AS
