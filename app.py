@@ -10,92 +10,63 @@ import json
 from datetime import date
 from huggingface_hub import hf_hub_download, Repository, HfApi
 
-# app.py — Zbirni, memorijski-štedljivi Streamlit app za "Teretna kola SK"
-# Kombinuje funkcionalnosti iz oba fajla i koristi DuckDB za minimalno korišćenje RAM-a.
-# Izvori: originalni skripti (parsiranje, HF/parquet, admin UI). 
-# Potreban: python paketi: streamlit, duckdb, polars, pandas, pyarrow, huggingface_hub (opciono)
-
 import os
-import glob
 import io
-import json
 import time
-from datetime import datetime, date, timedelta
+from datetime import datetime
 
 import streamlit as st
 import duckdb
 import polars as pl
 import pandas as pd
 
-# OPTIONAL: if you want HF parquet features
-try:
-    from huggingface_hub import hf_hub_download, HfApi
-    HF_AVAILABLE = True
-except Exception:
-    HF_AVAILABLE = False
+from huggingface_hub import hf_hub_download, HfApi
 
-# ---------- Konfiguracija ----------
-st.set_page_config(layout="wide", page_title="🚂 Teretna kola SK - Unified")
-DEFAULT_FOLDER = os.environ.get("TERETNA_FOLDER", r"C:\Teretna kola")
-DB_FILE = os.environ.get("TERETNA_DB", os.path.join(DEFAULT_FOLDER, "kola_sk.db"))
-STATE_FILE = os.path.join(DEFAULT_FOLDER, "loaded_files.json")
-TABLE_NAME = "kola"
+# ---------------- CONFIG ----------------
+st.set_page_config(layout="wide", page_title="🚂 Teretna kola SK - HuggingFace edition")
 
-# Admin secrets (možeš ih staviti u streamlit secrets)
 ADMIN_PASS = st.secrets.get("ADMIN_PASS", "tajna123")
-HF_TOKEN = st.secrets.get("HF_TOKEN", None)
-HF_REPO = st.secrets.get("HF_REPO", None)
+HF_TOKEN = st.secrets.get("HF_TOKEN")
+HF_REPO = st.secrets.get("HF_REPO")
+TABLE_NAME = "kola"
+HF_PARQUET = "kola_sk.parquet"
 
-# ---------- Pomoćne funkcije za memoriju ----------
-# - Koristimo jednu @st.cache_resource DuckDB konekciju (jedan objekat po session)
-# - Izbegavamo velike pandas.DataFrame trajne kopije; radimo većinu batch operacija direktno u DuckDB.
+# ---------------- HF helperi ----------------
+def hf_upload_parquet(local_path: str, repo_id: str, filename: str, token: str):
+    api = HfApi()
+    api.upload_file(
+        path_or_fileobj=local_path,
+        repo_id=repo_id,
+        path_in_repo=filename,
+        repo_type="dataset",
+        token=token
+    )
+
+def hf_get_parquet_path(filename: str) -> str:
+    return hf_hub_download(
+        repo_id=HF_REPO,
+        filename=filename,
+        repo_type="dataset",
+        token=HF_TOKEN
+    )
+
+# ---------------- DuckDB konekcija ----------------
 @st.cache_resource
-def get_duckdb_connection(db_path=DB_FILE, read_only=False):
-    # Konekcija ka disk-based DuckDB (manje RAM nego držati sve u pandas)
-    return duckdb.connect(database=db_path, read_only=read_only)
+def get_con():
+    return duckdb.connect(database=":memory:")
 
-# Brzi SQL helper (kešira rezultate kad je potrebno)
-@st.cache_data
-def run_sql(sql: str):
-    con = get_duckdb_connection()
-    return con.execute(sql).fetchdf()
+def load_table_from_hf():
+    parquet_path = hf_get_parquet_path(HF_PARQUET)
+    con = get_con()
+    con.execute(f"DROP TABLE IF EXISTS {TABLE_NAME}")
+    con.execute(f"CREATE TABLE {TABLE_NAME} AS SELECT * FROM read_parquet('{parquet_path}')")
+    return con
 
-# ---------- Učitaj mapu stanica (globalno, jednom) ----------
-# Ako postoji stanice.xlsx, učitaj u dict radi mapiranja imena stanica.
-STANICE_MAP = {}
-try:
-    if os.path.exists("stanice.xlsx"):
-        tmp = pd.read_excel("stanice.xlsx")
-        tmp["sifra"] = tmp["sifra"].astype(str).str.strip()
-        STANICE_MAP = dict(zip(tmp["sifra"], tmp["naziv"]))
-except Exception as e:
-    st.warning(f"Ne mogu da učitam stanice.xlsx: {e}")
-
-def add_station_names_pandas(df: pd.DataFrame) -> pd.DataFrame:
-    # Koristimo kratkotrajnu pandas transformaciju — brišemo brzo posle upisa u DB
-    if not STANICE_MAP:
-        return df
-    if "Stanica" in df.columns:
-        df["Stanica"] = df["Stanica"].astype(str).str.strip()
-        df.insert(df.columns.get_loc("Stanica")+1, "Naziv st.", df["Stanica"].map(STANICE_MAP))
-    # mapiranje za Otp/Up stanice (ako postoje)
-    for col, flag_col, name_col in [
-        ("Otp st", "Otp. država", "Naziv otp st."),
-        ("Up st", "Uputna država", "Naziv up st.")
-    ]:
-        if col in df.columns and flag_col in df.columns:
-            mask = df[flag_col].astype(str).str.strip() == "72"
-            df[name_col] = None
-            df.loc[mask, name_col] = df.loc[mask, col].astype(str).str.strip().map(STANICE_MAP)
-    return df
-
-# ---------- Parse TXT (polars) ----------
+# ---------------- Parsiranje TXT ----------------
 def parse_txt(path: str) -> pl.DataFrame:
-    """Parsira fixed-width txt u polars DataFrame — low-memory (streaming čitanje linija)."""
     rows = []
     with open(path, "r", encoding="utf-8", errors="ignore") as f:
         for line in f:
-            # kraće polja (prilagodi po potrebi)
             rows.append({
                 "Režim": line[0:2].strip(),
                 "Vlasnik": line[2:4].strip(),
@@ -108,29 +79,132 @@ def parse_txt(path: str) -> pl.DataFrame:
                 "Status": line[25:27].strip(),
                 "Datum": line[27:35].strip(),
                 "Vreme": line[35:39].strip(),
-                "source_file": os.path.basename(path),
             })
     df = pl.DataFrame(rows)
-    # kombinuje Datum+Vreme (tolerantno)
     df = df.with_columns([
         (pl.col("Datum") + " " + pl.col("Vreme")).str.strptime(pl.Datetime, "%Y%m%d %H%M", strict=False).alias("DatumVreme")
     ])
     return df
 
-# ---------- State fajl (koji txt-ove smo već procesirali) ----------
-def load_state():
-    if os.path.exists(STATE_FILE):
-        try:
-            with open(STATE_FILE, "r", encoding="utf-8") as f:
-                return set(json.load(f))
-        except Exception:
-            return set()
-    return set()
+# ---------------- Admin login ----------------
+if "admin_logged_in" not in st.session_state:
+    st.session_state.admin_logged_in = False
 
-def save_state(processed_files):
-    os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(list(processed_files), f, indent=2)
+st.sidebar.title("⚙️ Podešavanja")
+if not st.session_state.admin_logged_in:
+    password = st.sidebar.text_input("🔑 Unesi lozinku:", type="password")
+    if st.sidebar.button("🔓 Otključaj"):
+        if password == ADMIN_PASS:
+            st.session_state.admin_logged_in = True
+            st.sidebar.success("✅ Ulogovan")
+        else:
+            st.sidebar.error("❌ Pogrešna lozinka")
+else:
+    if st.sidebar.button("🚪 Odjavi se"):
+        st.session_state.admin_logged_in = False
+
+# ---------------- Admin sekcija ----------------
+if st.session_state.admin_logged_in:
+    tabs = st.tabs(["📂 Init HF", "📄 Upload TXT/XLSX", "🔍 SQL upiti"])
+
+    # Init HF
+    with tabs[0]:
+        st.subheader("📂 Inicijalizuj / Update HuggingFace parquet")
+        upl_files = st.file_uploader("Izaberi TXT fajlove", type=["txt"], accept_multiple_files=True)
+        if st.button("🚀 Kreiraj novi HF parquet"):
+            if upl_files:
+                tmp_parts = []
+                for upl in upl_files:
+                    tmp_path = os.path.join("/tmp", upl.name)
+                    with open(tmp_path, "wb") as f:
+                        f.write(upl.getbuffer())
+                    df = parse_txt(tmp_path)
+                    pq = tmp_path + ".parquet"
+                    df.write_parquet(pq)
+                    tmp_parts.append(pq)
+
+                # Spoji sve u jedan parquet preko DuckDB
+                con = get_con()
+                files_str = "[" + ",".join([f"'{p}'" for p in tmp_parts]) + "]"
+                con.execute(f"CREATE OR REPLACE TABLE {TABLE_NAME} AS SELECT * FROM read_parquet({files_str})")
+                con.execute(f"""
+                    CREATE OR REPLACE TABLE {TABLE_NAME} AS
+                    SELECT *, ROW_NUMBER() OVER (ORDER BY DatumVreme ASC NULLS LAST) AS ID_rb
+                    FROM {TABLE_NAME}
+                """)
+                final_path = "/tmp/" + HF_PARQUET
+                con.execute(f"COPY {TABLE_NAME} TO '{final_path}' (FORMAT PARQUET)")
+
+                # Upload na HF
+                hf_upload_parquet(final_path, HF_REPO, HF_PARQUET, HF_TOKEN)
+                st.success("✅ HF parquet kreiran i uploadovan")
+
+    # Upload pojedinačnog fajla
+    with tabs[1]:
+        st.subheader("📄 Dodaj jedan TXT fajl u HF parquet")
+        upl = st.file_uploader("Izaberi TXT", type=["txt"])
+        if st.button("➕ Dodaj u HF parquet"):
+            if upl:
+                tmp_path = os.path.join("/tmp", upl.name)
+                with open(tmp_path, "wb") as f:
+                    f.write(upl.getbuffer())
+                df = parse_txt(tmp_path)
+                pq = tmp_path + ".parquet"
+                df.write_parquet(pq)
+
+                # Učitaj postojeći parquet iz HF
+                parquet_path = hf_get_parquet_path(HF_PARQUET)
+                con = get_con()
+                con.execute(f"CREATE OR REPLACE TABLE {TABLE_NAME} AS SELECT * FROM read_parquet('{parquet_path}')")
+                con.execute(f"INSERT INTO {TABLE_NAME} SELECT * FROM read_parquet('{pq}')")
+
+                con.execute(f"""
+                    CREATE OR REPLACE TABLE {TABLE_NAME} AS
+                    SELECT *, ROW_NUMBER() OVER (ORDER BY DatumVreme ASC NULLS LAST) AS ID_rb
+                    FROM {TABLE_NAME}
+                """)
+                final_path = "/tmp/" + HF_PARQUET
+                con.execute(f"COPY {TABLE_NAME} TO '{final_path}' (FORMAT PARQUET)")
+
+                # Upload nazad na HF
+                hf_upload_parquet(final_path, HF_REPO, HF_PARQUET, HF_TOKEN)
+                st.success("✅ Fajl dodat u HF parquet")
+
+    # SQL upiti
+    with tabs[2]:
+        st.subheader("🔍 SQL upiti nad HF parquetom")
+        try:
+            con = load_table_from_hf()
+            default_sql = f"SELECT * FROM {TABLE_NAME} LIMIT 50"
+            sql = st.text_area("SQL:", value=default_sql, height=150)
+            if st.button("▶️ Izvrši upit"):
+                t0 = time.time()
+                df = con.execute(sql).fetchdf()
+                st.success(f"OK ({time.time()-t0:.2f}s) — {len(df)} redova")
+                st.dataframe(df, use_container_width=True)
+        except Exception as e:
+            st.error(f"Greška: {e}")
+
+# ---------------- Public deo ----------------
+st.header("📊 Pregled podataka iz HuggingFace parquet-a")
+try:
+    con = load_table_from_hf()
+    df_preview = con.execute(f"SELECT * FROM {TABLE_NAME} ORDER BY DatumVreme DESC LIMIT 50").fetchdf()
+    st.dataframe(df_preview, use_container_width=True)
+
+    # ➕ Export opcije
+    st.subheader("⬇️ Preuzimanje podataka")
+    buf_xlsx = io.BytesIO()
+    df_preview.to_excel(buf_xlsx, index=False)
+    st.download_button("📥 Preuzmi Excel", data=buf_xlsx.getvalue(), file_name="kola_poslednje.xlsx")
+
+    buf_csv = io.StringIO()
+    df_preview.to_csv(buf_csv, index=False)
+    st.download_button("📥 Preuzmi CSV", data=buf_csv.getvalue().encode("utf-8"), file_name="kola_poslednje.csv")
+
+except Exception:
+    st.info("ℹ️ Još nema podataka na HuggingFace repou.")
+
 
 # ---------- Inicijalizacija baze (batch iz foldera) ----------
 def init_database(folder: str, table_name: str = TABLE_NAME):
