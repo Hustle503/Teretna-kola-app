@@ -2395,3 +2395,4 @@ if selected_tab == "ðŸ”§ Revizija":
             excel_file = "revizija_istek.xlsx"
             filtered_df.to_excel(excel_file, index=False)
             with open(excel_file, "rb") as f:
+                st.download_button("â¬‡ï¸ Preuzmi Excel (istek)", f, file_name=excel_file)
