@@ -842,25 +842,19 @@ if selected_tab == "📌 Kola u inostranstvu":
     if prikaz_tip == "Samo poslednje stanje":
         q_last = """
         WITH poslednje_stanje_kola AS (
-            SELECT *
-            FROM (
-                SELECT 
-                    k.*,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY "Broj vagona"
-                        ORDER BY "DatumVreme" DESC
-                    ) AS rn
-                FROM kola k
-            ) sub
-            WHERE rn = 1
+            SELECT DISTINCT ON ("Broj kola")
+                k.*
+            FROM kola k
+            ORDER BY "Broj kola", "DatumVreme" DESC
         )
         SELECT s."Broj kola" AS broj_stanje,
                k.*
         FROM "Stanje SK" s
         LEFT JOIN poslednje_stanje_kola k
-          ON TRY_CAST(s."Broj kola" AS BIGINT) = TRY_CAST(k."Broj vagona" AS BIGINT)
-        WHERE k.status IN (21, 24);
-        """
+          ON s."Broj kola" = k."Broj kola";
+                  ON TRY_CAST(s."Broj kola" AS BIGINT) = TRY_CAST(k."Broj vagona" AS BIGINT)
+                WHERE k.status IN (21, 24);
+                """
 
         try:
             df_foreign = run_sql(q_last)
