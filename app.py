@@ -688,6 +688,7 @@ if selected_tab == "📌 Poslednje stanje kola":
         SELECT *
         FROM poslednje;
          df_last = run_sql(q_last)
+         """
 
         # 🔹 Sačuvaj i u sesiju i u DuckDB
         st.session_state.df_last = df_last
@@ -809,14 +810,14 @@ if selected_tab == "🔬 Pregled podataka":
             cols_sql = ", ".join([f'k."{c}"' if c not in ("PR", "NR") else f's."{c}"' for c in cols])
 
             # SQL upit sa LEFT JOIN na Stanje SK
-            q = f'''
+            q = f"""
             SELECT {cols_sql}
             FROM "{TABLE_NAME}" k
             LEFT JOIN "Stanje SK" s
               ON k."Broj vagona" = s."Broj kola"
             {where_sql}
             LIMIT {int(limit)}
-            '''
+            """
 
             df_preview = run_sql(q)
             st.dataframe(df_preview, use_container_width=True)
