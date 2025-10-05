@@ -69,8 +69,12 @@ def get_duckdb_connection(parquet_files: list):
 PARQUET_FILES = ["kola.parquet", "rastojanja.parquet", "stanice.parquet",
                  "stanje.parquet", "stanje_SK.parquet"]
 
-global con
-
+# 🔹 Kreiramo konekciju samo ako nije već sačuvana u sesiji
+if "con" not in st.session_state:
+    con = get_duckdb_connection(PARQUET_FILES)
+    st.session_state["con"] = con
+else:
+    con = st.session_state["con"]
 # -------------------- SQL HELPER --------------------
 @st.cache_data
 def run_sql(sql: str) -> pd.DataFrame:
