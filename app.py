@@ -8,6 +8,7 @@ import io
 import polars as pl
 import json
 from datetime import date
+from huggingface_hub import hf_hub_download, HfApi
 
 st.set_page_config(layout="wide", page_title="🚂 Teretna kola SK")
 
