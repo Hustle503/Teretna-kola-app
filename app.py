@@ -859,7 +859,6 @@ if selected_tab == "📌 Kola u inostranstvu":
           ON TRY_CAST(s."Broj kola" AS BIGINT) = TRY_CAST(k."Broj vagona" AS BIGINT)
         WHERE k."Status" IN (21, 24);
         """
-
         try:
             df_foreign = run_sql(q_last)
             st.success(f"🌍 Pronađeno {len(df_foreign)} kola u inostranstvu (poslednje stanje).")
