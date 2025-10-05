@@ -69,7 +69,7 @@ def get_duckdb_connection(parquet_files: list):
 PARQUET_FILES = ["kola.parquet", "rastojanja.parquet", "stanice.parquet",
                  "stanje.parquet", "stanje_SK.parquet"]
 
-con = get_duckdb_connection(PARQUET_FILES)
+global con
 
 # -------------------- SQL HELPER --------------------
 @st.cache_data
