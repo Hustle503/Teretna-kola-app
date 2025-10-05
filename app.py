@@ -359,7 +359,7 @@ def add_txt_file_streamlit(uploaded_file, TABLE_NAME: str = TABLE_NAME):
         pl.col("Broj kola").str.slice(2).cast(pl.Int64, strict=False).alias("Broj vagona")
     ])
 
-    con = get_duckdb_connection()
+    con = get_duckdb_connection(PARQUET_FILES)
     # Dobavi poslednji ID
     try:
         max_id = run_sql(f"SELECT MAX(id) AS max_id FROM {TABLE_NAME}").iloc[0, 0]
